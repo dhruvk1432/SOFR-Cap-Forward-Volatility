@@ -1,46 +1,147 @@
-\documentclass[11pt]{article}
-\usepackage[margin=1in]{geometry}
-\usepackage{amsmath,booktabs,graphicx,hyperref}
+\documentclass[12pt]{article}
+\usepackage[margin=0.95in]{geometry}
+\usepackage{amsmath,amssymb,booktabs,graphicx}
+\usepackage[hypertexnames=false]{hyperref}
 \usepackage{array}
 \usepackage{float}
+\usepackage{setspace}
 \hypersetup{colorlinks=true,linkcolor=black,urlcolor=blue,citecolor=black}
+\setstretch{1.04}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 
-\title{SOFR Cap Forward Volatility: Stripping, Risk Premia, and Forecasting Discipline}
+\title{\vspace{-0.6cm}SOFR Cap Forward Volatility, Risk Premia, and Rates-Volatility Carry}
 \author{Dhruv Kohli}
 \date{June 2026}
 
 \begin{document}
 \maketitle
+\vspace{-0.4cm}
+\noindent\rule{\textwidth}{0.4pt}
 
 \begin{abstract}
-This note explains the intuition behind the SOFR cap forward-volatility project.  The goal is to strip a caplet-level forward-volatility curve from quoted SOFR cap flat vols, then ask whether the resulting forward-vol curve is an expectations curve or a risk-premium curve.  The central lesson is methodological: the curve contains a large positive forward-vol premium, but overlapping forecast horizons and a short post-2022 sample make the long-horizon trading evidence much weaker than naive Sharpe-like statistics suggest.
+This paper asks whether the forward-volatility curve implied by SOFR caps behaves like an
+expectations curve or like a compensated risk-premium curve. I strip caplet-level forward
+normal volatility from quoted SOFR cap flat vols, validate the curve construction against an
+independent benchmark workbook, and then test whether longer forward-vol points forecast future short
+forward volatility. The evidence is deliberately conservative: stripped forward vols display a
+large positive premium relative to later 0.5Y forward vols and forward realized SOFR
+volatility, but overlapping horizons and the short post-2022 sample make naive significance
+claims fragile. A walk-forward ridge forecast converts the premium into a stylized
+rates-volatility carry screen. The screen earns positive after-cost proxy P\&L in the tested
+sample, with annualized Sharpe 2.46, but the block-bootstrap interval for weekly mean P\&L is
+wide. I therefore interpret the result as a research-grade investability test, not as a production
+caplet trading strategy. The production conclusion is narrower and stronger: SOFR cap
+forward vols contain an economically meaningful premium, and a disciplined researcher should
+only promote that premium to a trade after caplet-level marks, bid/ask, margin, and execution
+are modeled explicitly.
 \end{abstract}
 
-\section{Question and intuition}
-A cap is a portfolio of caplets.  A market flat volatility for a maturity $T$ is the single volatility that reprices the entire cap.  A forward volatility asks a sharper question: after previous caplets have already been priced, what volatility must the next marginal caplet have so that the full cap price still matches the market quote?
+\noindent\rule{\textwidth}{0.4pt}
 
-This is analogous to stripping zero rates from par swap rates.  Par instruments are observable, but the object of interest is the sequence of marginal forward objects.  In rates volatility, this marginal object is useful because it separates front-end policy uncertainty from medium-term volatility risk premia.
+\section{Introduction}
 
-\section{Data and curve construction}
-The local data set contains 989 SOFR cap-vol quote dates from 2022-03-17 through 2025-12-31, SOFR swap quotes, and daily SOFR reference rates.  The raw workbooks are intentionally not tracked in Git.  The public repo contains only code, notebooks, documentation, tests, and this paper.
+SOFR caps quote a flat volatility for the full option package, but the trading object inside the
+package is a sequence of caplets. This distinction matters because the market can price near-term
+policy uncertainty, medium-term volatility risk, and long-run volatility supply through different
+parts of the curve. A cap flat vol is therefore a par object. A stripped forward vol is the marginal
+object. It asks how much volatility the next caplet must carry, after the earlier caplets have already
+been priced, in order for the full cap to match the market quote.
 
-For each date, the notebook does the following.
-\begin{enumerate}
-    \item Bootstrap a quarterly SOFR discount curve from interpolated SOFR swap quotes.
-    \item Convert quoted normal cap vols, in basis points, into Black-equivalent flat vols using the ATM approximation
-    \[
-        \sigma^{B}_{T} \approx \frac{\sigma^{N}_{T}}{F_T}.
-    \]
-    \item Reprice each cap as a sum of Black caplets,
-    \[
-        C(T,K,\sigma_T^{\text{flat}}) = \sum_{i=1}^{n(T)} Z_i B(F_i,K,\sigma_T^{\text{flat}},t_i),
-    \]
-    where $F_i$ is the forward rate, $Z_i$ is the discount factor, and $K$ is the ATM cap strike.
-    \item Solve the marginal caplet volatility $\sigma_i^{\text{fwd}}$ by matching the remaining caplet value after previously stripped caplets have been removed.
-    \item Convert stripped Black forward vols back into normal-vol units for time-series analysis.
-\end{enumerate}
+This paper studies that marginal object. The empirical question is not simply whether SOFR cap
+volatility is high or low. The question is whether the forward-vol curve is mainly an expectations
+curve for future short-tenor volatility, or whether it embeds a premium that can be monitored and
+possibly harvested. That framing is important for trading. If the curve is an unbiased expectations
+curve, then a high long-forward vol is mostly a forecast. If the curve contains a persistent premium,
+then the long-forward point may be rich relative to future realized volatility even when the
+directional level of rates is difficult to forecast.
 
-The 2025-06-30 validation workbook is used as an implementation check.  The maximum absolute errors are small relative to the curve levels.
+The empirical contribution is deliberately disciplined. First, I build the caplet curve from the
+quoted cap surface rather than taking the forward-vol object as given. The implementation
+bootstraps a quarterly SOFR discount curve, converts normal cap vols into Black-equivalent flat
+vols, reprices each cap as a sum of caplets, and solves the residual marginal caplet volatility.
+Second, I test the expectations-hypothesis analog with horizon-matched HAC standard errors and
+effective non-overlapping sample counts. Third, I compare implied forward vol with forward
+realized SOFR volatility and policy-cycle regimes. Fourth, I build a walk-forward trading screen
+that uses only lagged information, transaction costs, and volatility targeting.
+
+The main finding is a premium rather than a clean forecast. The longer forward-vol points are far
+above later realized short forward vols, while the forecasting slopes are far from one. A stylized
+weekly carry rule that sells rich forward vol and buys cheap forward vol earns 1318.41 bp of proxy
+P\&L over 124 backtest observations after a 2 bp turnover cost. The result is strongest in the pause
+and easing regimes. It is not enough evidence to claim executable alpha, because the test is short,
+the product-level mark-to-market is simplified, and the bootstrap interval for weekly mean P\&L
+crosses zero at the lower end. The correct reading is that the premium is economically interesting
+and worth expanding, not that the current notebook is a deployable options book.
+
+The remainder of the paper is organized as follows. Section 2 places the design in the rates-vol
+and empirical-inference literatures. Section 3 describes the data and caplet stripping procedure.
+Section 4 defines the forecast, premium, and strategy objects. Section 5 reports the main results.
+Section 6 states the implementation gap. Section 7 concludes, and Appendix A gives a
+claim-by-claim audit of what the repo proves.
+
+\section{Related Literature}
+
+The curve-construction layer follows the standard logic of caplet stripping in interest-rate option
+markets. A cap can be valued as a portfolio of caplets under the Black framework
+\cite{black1976}, and the forward-volatility curve is obtained by solving the marginal caplet vols
+that reproduce quoted flat cap prices. The conceptual analogy is the same as stripping zero rates
+from par swap rates: the market quote is a bundled price, while the research object is the sequence
+of marginal forward prices.
+
+The empirical layer is closer to tests of expectations hypotheses and risk premia than to option
+pricing alone. A forward rate, forward volatility, or forward variance can be read as an expectation
+plus compensation for bearing risk. The point of the paper is to separate those two readings as far
+as the sample permits. Newey--West inference is used because overlapping forecast horizons create
+serially correlated forecast errors \cite{neweywest1987}. The strategy section is intentionally closer
+to a trading research workflow: it treats the premium as a candidate signal, then asks whether the
+signal survives out-of-sample forecasting, costs, and position scaling.
+
+\section{Data and Curve Construction}
+
+\subsection{Data}
+
+The local data set contains 989 SOFR cap-volatility quote dates from 2022-03-17 through
+2025-12-31, SOFR swap quotes, and daily SOFR reference rates. The raw Excel workbooks are
+not tracked in Git. The public repository contains the executed notebook, reusable Python
+functions, tests, documentation, figures, and this paper.
+
+The core workbooks are \texttt{project\_cap\_vol\_ts.xlsx},
+\texttt{cap\_curves\_2025-06-30.xlsx}, and \texttt{ref\_rates.xlsx}. The first file supplies the time
+series of cap flat vols. The second supplies the validation date used to verify the curve
+implementation. The third supplies SOFR reference rates used for realized-volatility benchmarks.
+Optional FRED data can be downloaded by the repo script for policy-regime context, but those
+CSV files are written under \texttt{data/raw/} and remain outside version control.
+
+\subsection{From Flat Cap Volatility to Forward Caplet Volatility}
+
+Let $T$ index cap maturity and let $i=1,\ldots,n(T)$ index quarterly caplets. A market flat vol
+$\sigma_T^{\mathrm{flat}}$ is the single volatility that prices the full cap:
+\begin{equation}
+    C(T,K,\sigma_T^{\mathrm{flat}})
+    = \sum_{i=1}^{n(T)} Z_i B(F_i,K,\sigma_T^{\mathrm{flat}},t_i),
+\end{equation}
+where $Z_i$ is the discount factor, $F_i$ is the forward SOFR rate, $K$ is the cap strike, and
+$B(\cdot)$ denotes the Black caplet price. The stripped forward-volatility problem solves a
+different equation. After all previously stripped caplets have been valued, the next unknown
+caplet volatility $\sigma_i^{\mathrm{fwd}}$ must match the remaining market value:
+\begin{equation}
+    C(T_i,K,\sigma_{T_i}^{\mathrm{flat}})
+    - \sum_{j<i} Z_j B(F_j,K,\sigma_j^{\mathrm{fwd}},t_j)
+    =
+    Z_i B(F_i,K,\sigma_i^{\mathrm{fwd}},t_i).
+\end{equation}
+
+Quoted normal vols are converted into Black-equivalent flat vols using the ATM approximation
+\begin{equation}
+    \sigma_T^B \approx \frac{\sigma_T^N}{F_T}.
+\end{equation}
+The stripped Black forward vols are then converted back into normal-volatility units for the
+time-series analysis. This conversion is not a theoretical claim that the Black and normal models
+are identical. It is an implementation bridge that allows the validation workbook and the time
+series to be read in consistent units.
+
+The 2025-06-30 validation workbook is used as a hard implementation check. The maximum
+absolute errors are small relative to the curve levels:
 
 \begin{center}
 \begin{tabular}{l r}
@@ -54,8 +155,66 @@ Forward Black vols & 0.002311 \\
 \end{tabular}
 \end{center}
 
-\section{What the stripped surface looks like}
-The stripped normal-vol panel is sampled weekly.  The front end is the most volatile part of the surface because it is closest to monetary-policy uncertainty, while the longer end is smoother.
+\section{Empirical Framework}
+
+\subsection{Expectations-Hypothesis Regression}
+
+The first empirical object is an expectations-hypothesis analog for forward volatility. For short
+tenor $\delta=0.5$ and longer tenor $\tau$, let $h=\tau-\delta$. The regression is
+\begin{equation}
+    \sigma^N_{t+h,\delta}
+    = \alpha_\tau + \beta_\tau \sigma^N_{t,\tau} + \varepsilon_{t+h,\tau}.
+\end{equation}
+If the longer forward-vol point were an unbiased forecast of future short forward vol, the slope
+would be near one after accounting for measurement and risk-premium terms. In this sample, the
+forecast horizons overlap heavily. The paper therefore reports HAC standard errors with lags
+matched to the horizon and an effective non-overlapping sample count.
+
+This section is intentionally not framed as a structural pricing test. The sample starts in 2022,
+which means the observations are concentrated in a hiking cycle, a pause, and the beginning of an
+easing regime. That is useful for studying the modern SOFR market, but it limits the independent
+time-series variation available for long-horizon tests.
+
+\subsection{Forward-Volatility Risk Premium}
+
+The second object is the ex post forward-volatility term premium,
+\begin{equation}
+    \mathrm{VTP}_{t,\tau}
+    =
+    \sigma^N_{t,\tau} - \sigma^N_{t+h,0.5}.
+\end{equation}
+This is a realized premium measure: it compares the long forward-vol point observed at time $t$
+with the short forward-vol point eventually observed at $t+h$. I also compare implied forward vol
+with forward realized SOFR volatility. That realized-vol benchmark is economically important
+because option sellers ultimately care about realized rate volatility, not only about later implied
+volatility marks.
+
+\subsection{Walk-Forward Trading Screen}
+
+The strategy layer asks whether the premium can be converted into a disciplined research signal.
+Let $\widehat{\sigma}^{RV}_{t+1}$ denote an expanding-window forecast of forward realized SOFR
+volatility using information available at $t$. The signal is
+\begin{equation}
+    q_t = \sigma^N_{t,0.5} - \widehat{\sigma}^{RV}_{t+1}.
+\end{equation}
+The strategy sells forward vol when $q_t$ is above 8 bp, buys forward vol when $q_t$ is below
+$-8$ bp, scales exposure to a volatility-risk target, and charges 2 bp of normal-vol transaction cost
+on turnover. The forecasting features are current implied vol, trailing realized SOFR volatility,
+forward-vol slope, 13-week vol momentum, and 13-week vol-of-vol. Ridge regression is used for
+stability because the feature set is collinear and the sample is short.
+
+This design is deliberately less ambitious than a production trade. It is a screen for whether a
+lagged volatility-risk-premium signal has enough structure to justify deeper modeling. A production
+implementation would require caplet-level marks, executable bid/ask, margin, liquidation rules,
+and a definition of the traded cap/floor structure.
+
+\section{Results}
+
+\subsection{The Stripped Surface}
+
+The stripped forward-normal-volatility panel is sampled weekly. The front end is the most
+volatile part of the surface because it is closest to monetary-policy uncertainty, while the longer
+end is smoother and behaves more like a premium state variable.
 
 \begin{center}
 \begin{tabular}{lrrrr}
@@ -72,20 +231,23 @@ Tenor & Mean bp & Std bp & Min bp & Max bp \\
 \end{tabular}
 \end{center}
 
-A PCA of weekly forward-vol changes is included in the notebook.  It acts as a diagnostic rather than a trading model: it shows whether the surface mostly moves in parallel or whether slope and hump movements matter.  This makes the project more than a one-curve bootstrap; it starts treating the cap market as a volatility surface.
-
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.92\textwidth]{figures/sofr_forward_vol_panel.pdf}
-\caption{Stripped SOFR forward normal volatility by tenor.  The front end reacts most sharply to monetary-policy uncertainty, while the longer end is smoother and behaves more like a risk-premium state variable.}
+\caption{Stripped SOFR forward normal volatility by tenor. The front end reacts most sharply to
+policy uncertainty, while the longer end is smoother and more naturally interpreted as a
+premium state variable.}
+\label{fig:sofr_panel}
 \end{figure}
 
-\section{Expectations-hypothesis test}
-The core empirical test asks whether today's forward volatility predicts future short-tenor implied volatility.  For a short tenor $\delta=0.5$ and longer tenor $\tau$, define $h=\tau-\delta$ and estimate
-\[
-    \sigma_{t+h,\delta}^{N} = \alpha + \beta \sigma_{t,\tau}^{N} + \varepsilon_{t+h}.
-\]
-Because weekly observations overlap heavily at horizons of six months or more, the notebook uses HAC standard errors with lags matched to the forecast horizon and reports the effective non-overlapping sample count.
+A PCA of weekly forward-vol changes is included in the notebook as a surface diagnostic rather
+than as a trading model. Its purpose is to show whether the surface mostly moves in parallel or
+whether slope and hump movements matter. This turns the project from a one-curve bootstrap
+into a rates-volatility-surface study.
+
+\subsection{Expectations-Hypothesis Evidence}
+
+The expectations-hypothesis slopes are far from one:
 
 \begin{center}
 \begin{tabular}{lrrrrr}
@@ -100,20 +262,14 @@ $\tau$ & Alpha bp & Beta & HAC s.e. & $R^2$ & Effective N \\
 \end{tabular}
 \end{center}
 
-The slopes are far from one.  The economic conclusion is that the forward-vol curve is not an unbiased forecast of future short forward vol over this sample.  It behaves more like a risk-premium curve plus a noisy expectations component.
+The result should be read with two constraints in mind. First, the slopes are economically
+inconsistent with an unbiased expectations curve in this sample. Second, the effective independent
+sample shrinks quickly as the horizon extends. The paper can therefore claim strong descriptive
+evidence of a forward-vol premium, but it cannot claim a precise long-horizon structural estimate.
 
-\section{Term premium and realized-vol benchmark}
-The implied term premium is defined as
-\[
-    \text{VTP}_{t,\tau}=\sigma^{N}_{t,\tau}-\sigma^{N}_{t+h,0.5}.
-\]
-The average premium is positive across tenors, but the effective sample counts shrink quickly with horizon.
+\subsection{Term Premium and Realized-Volatility Benchmark}
 
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.92\textwidth]{figures/sofr_term_premium.pdf}
-\caption{Forward-vol term premia relative to future 0.5Y forward vol.  The premium is persistent, but the overlapping-horizon structure makes naive weekly statistics overstate the amount of independent evidence.}
-\end{figure}
+The forward-volatility premium is positive across the main tenors:
 
 \begin{center}
 \begin{tabular}{lrrrr}
@@ -128,12 +284,26 @@ $\tau$ & Mean bp & Std bp & Positive fraction & Effective N \\
 \end{tabular}
 \end{center}
 
-A second benchmark compares the 1Y forward normal vol with forward realized SOFR volatility over 3M and 6M windows.  The mean vol risk premium is about 32 bp for both windows, with a positive fraction near 70\%.  This is economically plausible, especially during the hiking cycle, but it is not a fully specified option P\&L model.  The notebook therefore frames it as a premium diagnostic, not a production trading strategy.
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/sofr_term_premium.pdf}
+\caption{Forward-vol term premia relative to future 0.5Y forward vol. The premium is persistent,
+but overlapping horizons mean that weekly observations overstate the amount of independent
+evidence.}
+\label{fig:term_premium}
+\end{figure}
 
-\section{Strategy extension}
-The upgraded notebook adds a stylized investability screen.  It does not assume that the premium is automatically tradable.  Instead, it builds a weekly forecast frame for the 0.5Y stripped forward normal vol, forecasts forward realized SOFR volatility using only lagged information, and trades only when implied vol is rich or cheap relative to that out-of-sample forecast.
+The realized-volatility benchmark tells the same story in a different language. Comparing 1Y
+forward normal vol with forward realized SOFR volatility over 3M and 6M windows gives a mean
+volatility risk premium of roughly 32 bp, with a positive fraction near 70\%. This is economically
+plausible in a rates market where volatility sellers demand compensation for policy uncertainty,
+but it is still a premium diagnostic rather than an executable P\&L statement.
 
-The forecasting features are deliberately simple: current implied vol, trailing realized SOFR volatility, slope of the forward-vol curve, 13-week vol momentum, and 13-week vol-of-vol.  The model is an expanding-window ridge regression.  Ridge is used for stability because the sample is short and the features are collinear.  The strategy sells forward vol when implied vol exceeds predicted realized vol by more than 8 bp, buys it when the signal is symmetrically cheap, scales exposure to a volatility-risk target, and charges 2 bp of normal-vol transaction cost on turnover.
+\subsection{Strategy Screen}
+
+The walk-forward strategy turns the premium into an investability screen. It trades only after the
+minimum training window, uses an expanding ridge forecast, scales exposure by risk, and subtracts
+turnover costs. The headline diagnostics are:
 
 \begin{center}
 \begin{tabular}{lr}
@@ -150,18 +320,113 @@ Turnover & 15.00 \\
 \end{tabular}
 \end{center}
 
-The result is promising but still a research proxy.  P\&L is concentrated in the pause and easing regimes; the hiking regime has no active observations after the minimum training window.  A block bootstrap for weekly mean P\&L has a wide interval, from roughly -1.49 bp to 20.72 bp.  The right conclusion is therefore ``continue research'': the signal is economically interesting, but the next step is a caplet-level mark-to-market model with bid/ask, margin, and executable cap/floor structures.
-
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.92\textwidth]{figures/sofr_strategy_diagnostics.pdf}
-\caption{The strategy extension tests whether implied forward vol is rich or cheap versus an expanding-window realized-vol forecast.  The lower panel shows the stylized carry P\&L after turnover costs; this is an investability screen, not a complete caplet execution model.}
+\caption{Out-of-sample realized-vol forecast, implied forward vol, and stylized carry P\&L after
+turnover costs. The strategy is an investability screen for the premium, not a complete caplet
+execution model.}
+\label{fig:strategy}
 \end{figure}
 
-\section{How to read the repo}
-Start with this paper for the intuition, then read \texttt{SOFR\_Cap\_Forward\_Volatility.ipynb} for the executed analysis.  The reusable implementation lives in \texttt{src/sofr\_forward\_vol.py}, and the validation tests live in \texttt{tests/test\_sofr\_forward\_vol.py}.
+The result is promising, but its interpretation is intentionally bounded. P\&L is concentrated in
+the pause and easing regimes; the hiking regime has no active observations after the minimum
+training window. A block bootstrap for weekly mean P\&L has a wide interval, from roughly
+-1.49 bp to 20.72 bp. That does not erase the economic signal. It prevents the paper from treating
+the signal as already production-ready.
 
-\section{Bottom line}
-The project demonstrates the full research process: curve construction, validation, surface diagnostics, statistical inference, and trading caveats.  The strongest conclusion is not that the strategy is automatically tradable.  The stronger conclusion is that forward SOFR cap vols contain a persistent premium, and that a lagged forecasting rule can harvest it in a stylized test, but a rigorous researcher must still discount overlapping-horizon performance and move next to caplet-level execution.
+\section{Implementation and Trading Interpretation}
+
+The clean research object is forward normal volatility. The tradable object would be a caplet,
+cap, floor, swaption overlay, or a structured package with actual bid/ask and margin. That mapping
+is not mechanical. A production version must mark each caplet through time, specify the strike
+and delta convention, incorporate skew if the trade is not exactly ATM, model realized hedge P\&L,
+and charge realistic costs. It must also decide whether the economic exposure is short vol, long
+convexity, curve-vol relative value, or a carry strategy with drawdown constraints.
+
+The current repo is therefore production-grade as a research artifact, not as a live trading system.
+It demonstrates a complete workflow: instrument stripping, validation, surface diagnostics,
+forecasting, cost-aware backtesting, regime attribution, and a clear stop before overclaiming. A
+quant researcher or trader should be able to inspect the notebook, reproduce the paper tables, and
+see exactly what still needs to be built before the idea becomes executable.
+
+\section{Conclusion}
+
+This paper builds a SOFR cap forward-volatility curve and uses it to study whether the market's
+marginal caplet vol is a forecast or a premium. The empirical evidence supports the premium
+interpretation. Forward vols are persistently above later short forward vols and forward realized
+SOFR volatility, while the expectations-hypothesis slopes are far from one.
+
+The trading evidence is useful but deliberately not oversold. A lagged ridge forecast and a
+cost-aware carry screen generate positive stylized P\&L, but the sample is short, the independent
+horizon count is small, and the product-level execution model is not yet complete. The correct
+next step is not to make the language stronger. It is to make the implementation stronger: caplet
+marks, bid/ask, margin, skew, executable structures, and stress tests across rate-vol regimes.
+
+\appendix
+\section{Claim-by-Claim Methodology Audit}
+
+\begin{center}
+\small
+\begin{tabular}{L{0.24\textwidth}L{0.31\textwidth}L{0.34\textwidth}}
+\toprule
+Claim & Implemented evidence & Allowed interpretation \\
+\midrule
+Forward vols are stripped from cap quotes &
+Cap flat vols are repriced as caplet portfolios; validation errors are reported for discount factors,
+forwards, and Black vols. &
+The repo implements the caplet-stripping workflow rather than relying on a precomputed
+forward-vol surface. \\
+\addlinespace
+The curve is not an unbiased expectations curve &
+Forecast slopes for future 0.5Y forward vol are far from one, with HAC standard errors and
+effective sample counts. &
+Strong descriptive evidence of a premium; not a large-sample structural test. \\
+\addlinespace
+The premium is economically meaningful &
+Forward-vol premia are positive across tenors and realized-vol comparisons show roughly 32 bp
+mean premium. &
+The market compensates sellers of forward rates volatility in this sample. \\
+\addlinespace
+The strategy is researchable &
+Walk-forward ridge forecast, lagged features, risk scaling, costs, regime attribution, and
+bootstrap uncertainty are implemented. &
+The signal justifies deeper trading research; it is not yet a caplet execution strategy. \\
+\addlinespace
+The public repo is safe to share &
+Raw workbooks and downloaded public data live outside version control; tests and documentation
+state the data contract. &
+Recruiters can review methodology and code without private data or secrets being published. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{How to Read the Repository}
+
+Start with this paper for the research object and claim hierarchy. Then read
+\path{SOFR_Cap_Forward_Volatility.ipynb} for the executed analysis. The reusable
+implementation is in \path{src/sofr_forward_vol.py}; tests are in
+\path{tests/test_sofr_forward_vol.py}; the data contract is in \path{data/README.md}; and
+the local knowledge-base protocol is in \path{docs/knowledge_base_protocol.md}.
+
+\begin{thebibliography}{9}
+
+\bibitem{black1976}
+Black, F. (1976).
+The pricing of commodity contracts.
+\textit{Journal of Financial Economics}, 3(1--2):167--179.
+
+\bibitem{andersenpiterbarg2010}
+Andersen, L. and Piterbarg, V. (2010).
+\textit{Interest Rate Modeling}.
+Atlantic Financial Press.
+
+\bibitem{neweywest1987}
+Newey, W. K. and West, K. D. (1987).
+A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance
+matrix.
+\textit{Econometrica}, 55(3):703--708.
+
+\end{thebibliography}
 
 \end{document}
