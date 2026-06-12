@@ -117,10 +117,32 @@ $\tau$ & Mean bp & Std bp & Positive fraction & Effective N \\
 
 A second benchmark compares the 1Y forward normal vol with forward realized SOFR volatility over 3M and 6M windows.  The mean vol risk premium is about 32 bp for both windows, with a positive fraction near 70\%.  This is economically plausible, especially during the hiking cycle, but it is not a fully specified option P\&L model.  The notebook therefore frames it as a premium diagnostic, not a production trading strategy.
 
+\section{Strategy extension}
+The upgraded notebook adds a stylized investability screen.  It does not assume that the premium is automatically tradable.  Instead, it builds a weekly forecast frame for the 0.5Y stripped forward normal vol, forecasts forward realized SOFR volatility using only lagged information, and trades only when implied vol is rich or cheap relative to that out-of-sample forecast.
+
+The forecasting features are deliberately simple: current implied vol, trailing realized SOFR volatility, slope of the forward-vol curve, 13-week vol momentum, and 13-week vol-of-vol.  The model is an expanding-window ridge regression.  Ridge is used for stability because the sample is short and the features are collinear.  The strategy sells forward vol when implied vol exceeds predicted realized vol by more than 8 bp, buys it when the signal is symmetrically cheap, scales exposure to a volatility-risk target, and charges 2 bp of normal-vol transaction cost on turnover.
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Diagnostic & Value \\
+\midrule
+Backtest observations & 124 \\
+Total stylized P\&L & 1318.41 bp \\
+Annualized Sharpe & 2.46 \\
+Max drawdown & -434.03 bp \\
+Hit rate while active & 70.59\% \\
+Turnover & 15.00 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The result is promising but still a research proxy.  P\&L is concentrated in the pause and easing regimes; the hiking regime has no active observations after the minimum training window.  A block bootstrap for weekly mean P\&L has a wide interval, from roughly -1.49 bp to 20.72 bp.  The right conclusion is therefore ``continue research'': the signal is economically interesting, but the next step is a caplet-level mark-to-market model with bid/ask, margin, and executable cap/floor structures.
+
 \section{How to read the repo}
 Start with this paper for the intuition, then read \texttt{SOFR\_Cap\_Forward\_Volatility.ipynb} for the executed analysis.  The reusable implementation lives in \texttt{src/sofr\_forward\_vol.py}, and the validation tests live in \texttt{tests/test\_sofr\_forward\_vol.py}.
 
 \section{Bottom line}
-The project demonstrates the full research process: curve construction, validation, surface diagnostics, statistical inference, and trading caveats.  The strongest conclusion is not that the strategy is automatically tradable.  The stronger conclusion is that forward SOFR cap vols contain a persistent premium, but a rigorous researcher must discount long-horizon performance statistics when the effective sample size is tiny.
+The project demonstrates the full research process: curve construction, validation, surface diagnostics, statistical inference, and trading caveats.  The strongest conclusion is not that the strategy is automatically tradable.  The stronger conclusion is that forward SOFR cap vols contain a persistent premium, and that a lagged forecasting rule can harvest it in a stylized test, but a rigorous researcher must still discount overlapping-horizon performance and move next to caplet-level execution.
 
 \end{document}

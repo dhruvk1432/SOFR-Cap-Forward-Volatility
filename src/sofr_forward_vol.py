@@ -31,6 +31,25 @@ class SofrCapData:
     validation_curve: pd.DataFrame | None = None
 
 
+@dataclass(frozen=True)
+class VolCarryConfig:
+    """Configuration for the stylized forward-volatility carry backtest.
+
+    The strategy is intentionally expressed in volatility points rather than as
+    a live caplet execution engine.  It tests whether implied forward vol is
+    rich or cheap versus a strictly out-of-sample realized-vol forecast before
+    any claim about a tradable cap structure is made.
+    """
+
+    tenor: float = 0.50
+    realized_window_days: int = 63
+    min_train_weeks: int = 52
+    threshold_bp: float = 8.0
+    transaction_cost_bp: float = 2.0
+    risk_target_bp: float = 35.0
+    max_abs_position: float = 1.0
+
+
 def _find_file(root: Path, filename: str) -> Path:
     candidates = [
         root / filename,
@@ -384,3 +403,223 @@ def policy_regime(date: pd.Timestamp) -> str:
     if pd.Timestamp("2024-09-01") <= date <= pd.Timestamp("2025-12-31"):
         return "Easing"
     return "Other"
+
+
+def trailing_realized_sofr_vol(sofr_daily: pd.Series, window_days: int) -> pd.Series:
+    """Annualized trailing realized volatility of daily SOFR changes."""
+
+    changes = sofr_daily.sort_index().diff()
+    realized = changes.rolling(
+        window=window_days,
+        min_periods=max(5, int(window_days * 0.70)),
+    ).std()
+    return (realized * np.sqrt(252.0)).rename(f"trailing_realized_{window_days}d")
+
+
+def _align_daily_to_weekly(series: pd.Series, weekly_index: pd.DatetimeIndex) -> pd.Series:
+    return series.sort_index().reindex(weekly_index, method="ffill")
+
+
+def build_vol_carry_frame(
+    normal_panel: pd.DataFrame,
+    sofr_daily: pd.Series,
+    tenor: float = 0.50,
+    realized_window_days: int = 63,
+) -> pd.DataFrame:
+    """Build an out-of-sample forecasting frame for forward-vol carry.
+
+    Columns are in decimal volatility units.  ``future_realized_vol`` is only
+    used as the label and payoff-settlement proxy; every feature is observable
+    at the weekly signal date.
+    """
+
+    if tenor not in normal_panel.columns:
+        raise KeyError(f"Tenor {tenor} is not present in the forward-vol panel.")
+
+    panel = normal_panel.sort_index().astype(float)
+    weekly_index = panel.index
+    trailing = _align_daily_to_weekly(
+        trailing_realized_sofr_vol(sofr_daily, realized_window_days),
+        weekly_index,
+    )
+    future = _align_daily_to_weekly(
+        forward_realized_sofr_vol(sofr_daily, realized_window_days),
+        weekly_index,
+    )
+
+    curve_max = max(panel.columns.astype(float))
+    frame = pd.DataFrame(index=weekly_index)
+    frame["implied_vol"] = panel[tenor]
+    frame["lag_realized_vol"] = trailing
+    frame["vol_slope"] = panel[curve_max] - panel[tenor]
+    frame["vol_momentum_13w"] = panel[tenor] - panel[tenor].shift(13)
+    frame["vol_of_vol_13w"] = panel[tenor].diff().rolling(13, min_periods=6).std()
+    frame["future_realized_vol"] = future
+    frame["policy_regime"] = [policy_regime(date) for date in frame.index]
+    return frame.dropna(subset=["implied_vol", "future_realized_vol"])
+
+
+def expanding_ridge_forecast(
+    frame: pd.DataFrame,
+    feature_cols: Iterable[str],
+    target_col: str = "future_realized_vol",
+    min_train: int = 52,
+    ridge: float = 1e-5,
+) -> pd.Series:
+    """Expanding-window ridge forecasts with train-sample standardization.
+
+    The function refits at every row using only prior observations.  Ridge is
+    used for numerical stability because the sample is short and features are
+    naturally collinear.
+    """
+
+    features = list(feature_cols)
+    clean = frame[features + [target_col]].astype(float)
+    predictions = pd.Series(index=frame.index, dtype=float, name="predicted_realized_vol")
+
+    for i, date in enumerate(clean.index):
+        train = clean.iloc[:i].dropna()
+        current = clean.loc[[date], features].dropna()
+        if len(train) < min_train or current.empty:
+            continue
+
+        x_train = train[features]
+        y_train = train[target_col]
+        mu = x_train.mean()
+        sigma = x_train.std(ddof=0).replace(0.0, 1.0)
+        x = (x_train - mu) / sigma
+        x = np.column_stack([np.ones(len(x)), x.values])
+        y = y_train.values
+
+        penalty = np.eye(x.shape[1]) * ridge
+        penalty[0, 0] = 0.0
+        beta = np.linalg.solve(x.T @ x + penalty, x.T @ y)
+
+        x_now = (current.iloc[0] - mu) / sigma
+        pred = float(np.r_[1.0, x_now.values] @ beta)
+        predictions.loc[date] = max(pred, 1e-8)
+
+    return predictions
+
+
+def volatility_carry_backtest(
+    frame: pd.DataFrame,
+    predictions: pd.Series,
+    config: VolCarryConfig | None = None,
+) -> pd.DataFrame:
+    """Backtest a stylized forward-volatility carry rule.
+
+    Position is positive when selling forward volatility and negative when
+    buying it.  P&L is the horizon-settled difference between implied and future
+    realized volatility, scaled to basis points of normal volatility.  This is
+    a research proxy for option carry, not an executable caplet valuation.
+    """
+
+    cfg = config or VolCarryConfig()
+    data = frame.join(predictions).dropna(
+        subset=["implied_vol", "future_realized_vol", "predicted_realized_vol"]
+    ).copy()
+    data["richness"] = data["implied_vol"] - data["predicted_realized_vol"]
+
+    threshold = cfg.threshold_bp / 10000.0
+    raw_position = np.select(
+        [data["richness"] > threshold, data["richness"] < -threshold],
+        [1.0, -1.0],
+        default=0.0,
+    )
+
+    forecast_error_vol = (
+        data["future_realized_vol"] - data["predicted_realized_vol"]
+    ).rolling(26, min_periods=8).std()
+    risk_scale = (cfg.risk_target_bp / 10000.0) / forecast_error_vol
+    risk_scale = risk_scale.replace([np.inf, -np.inf], np.nan).clip(
+        lower=0.0,
+        upper=cfg.max_abs_position,
+    )
+    data["position"] = pd.Series(raw_position, index=data.index) * risk_scale.fillna(0.0)
+
+    data["gross_pnl_bp"] = (
+        data["position"]
+        * (data["implied_vol"] - data["future_realized_vol"])
+        * 10000.0
+    )
+    data["turnover"] = data["position"].diff().abs().fillna(data["position"].abs())
+    data["cost_bp"] = data["turnover"] * cfg.transaction_cost_bp
+    data["net_pnl_bp"] = data["gross_pnl_bp"] - data["cost_bp"]
+    data["cum_net_pnl_bp"] = data["net_pnl_bp"].cumsum()
+    return data
+
+
+def strategy_performance(
+    backtest: pd.DataFrame,
+    pnl_col: str = "net_pnl_bp",
+    periods_per_year: int = 52,
+) -> dict[str, float]:
+    """Return high-level performance diagnostics for strategy P&L."""
+
+    pnl = backtest[pnl_col].dropna()
+    if pnl.empty:
+        return {
+            "total_pnl_bp": np.nan,
+            "ann_sharpe": np.nan,
+            "max_drawdown_bp": np.nan,
+            "hit_rate": np.nan,
+            "active_periods": 0,
+            "turnover": np.nan,
+        }
+
+    cumulative = pnl.cumsum()
+    drawdown = cumulative - cumulative.cummax()
+    active = backtest["position"].abs().reindex(pnl.index).fillna(0.0) > 1e-12
+    active_pnl = pnl[active]
+    std = pnl.std()
+    return {
+        "total_pnl_bp": float(pnl.sum()),
+        "ann_sharpe": float(pnl.mean() / std * np.sqrt(periods_per_year)) if std > 0 else np.nan,
+        "max_drawdown_bp": float(drawdown.min()),
+        "hit_rate": float((active_pnl > 0).mean()) if len(active_pnl) else np.nan,
+        "active_periods": int(active.sum()),
+        "turnover": float(backtest["turnover"].sum()) if "turnover" in backtest else np.nan,
+    }
+
+
+def regime_performance(backtest: pd.DataFrame) -> pd.DataFrame:
+    """Summarize strategy performance by the policy regimes used in the notebook."""
+
+    if "policy_regime" not in backtest:
+        raise KeyError("backtest must contain a policy_regime column.")
+    rows = []
+    for regime_name, group in backtest.groupby("policy_regime"):
+        stats = strategy_performance(group)
+        stats["regime"] = regime_name
+        rows.append(stats)
+    return pd.DataFrame(rows).set_index("regime").sort_index()
+
+
+def block_bootstrap_mean_ci(
+    pnl: pd.Series,
+    block_size: int = 8,
+    n_boot: int = 1000,
+    seed: int = 7,
+    alpha: float = 0.05,
+) -> tuple[float, float]:
+    """Block-bootstrap confidence interval for mean P&L.
+
+    The bootstrap respects the overlapping-horizon structure better than an
+    iid resample.  It is deliberately simple and deterministic for notebooks.
+    """
+
+    clean = pnl.dropna().astype(float).values
+    if len(clean) == 0:
+        return (np.nan, np.nan)
+    rng = np.random.default_rng(seed)
+    starts = np.arange(max(1, len(clean) - block_size + 1))
+    means = []
+    for _ in range(n_boot):
+        draws = []
+        while len(draws) < len(clean):
+            start = int(rng.choice(starts))
+            draws.extend(clean[start : start + block_size])
+        means.append(np.mean(draws[: len(clean)]))
+    lo, hi = np.quantile(means, [alpha / 2.0, 1.0 - alpha / 2.0])
+    return float(lo), float(hi)
