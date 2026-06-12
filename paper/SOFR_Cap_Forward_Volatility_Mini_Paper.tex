@@ -1,7 +1,8 @@
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
-\usepackage{amsmath,booktabs,hyperref}
+\usepackage{amsmath,booktabs,graphicx,hyperref}
 \usepackage{array}
+\usepackage{float}
 \hypersetup{colorlinks=true,linkcolor=black,urlcolor=blue,citecolor=black}
 
 \title{SOFR Cap Forward Volatility: Stripping, Risk Premia, and Forecasting Discipline}
@@ -73,6 +74,12 @@ Tenor & Mean bp & Std bp & Min bp & Max bp \\
 
 A PCA of weekly forward-vol changes is included in the notebook.  It acts as a diagnostic rather than a trading model: it shows whether the surface mostly moves in parallel or whether slope and hump movements matter.  This makes the project more than a one-curve bootstrap; it starts treating the cap market as a volatility surface.
 
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/sofr_forward_vol_panel.pdf}
+\caption{Stripped SOFR forward normal volatility by tenor.  The front end reacts most sharply to monetary-policy uncertainty, while the longer end is smoother and behaves more like a risk-premium state variable.}
+\end{figure}
+
 \section{Expectations-hypothesis test}
 The core empirical test asks whether today's forward volatility predicts future short-tenor implied volatility.  For a short tenor $\delta=0.5$ and longer tenor $\tau$, define $h=\tau-\delta$ and estimate
 \[
@@ -101,6 +108,12 @@ The implied term premium is defined as
     \text{VTP}_{t,\tau}=\sigma^{N}_{t,\tau}-\sigma^{N}_{t+h,0.5}.
 \]
 The average premium is positive across tenors, but the effective sample counts shrink quickly with horizon.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/sofr_term_premium.pdf}
+\caption{Forward-vol term premia relative to future 0.5Y forward vol.  The premium is persistent, but the overlapping-horizon structure makes naive weekly statistics overstate the amount of independent evidence.}
+\end{figure}
 
 \begin{center}
 \begin{tabular}{lrrrr}
@@ -138,6 +151,12 @@ Turnover & 15.00 \\
 \end{center}
 
 The result is promising but still a research proxy.  P\&L is concentrated in the pause and easing regimes; the hiking regime has no active observations after the minimum training window.  A block bootstrap for weekly mean P\&L has a wide interval, from roughly -1.49 bp to 20.72 bp.  The right conclusion is therefore ``continue research'': the signal is economically interesting, but the next step is a caplet-level mark-to-market model with bid/ask, margin, and executable cap/floor structures.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/sofr_strategy_diagnostics.pdf}
+\caption{The strategy extension tests whether implied forward vol is rich or cheap versus an expanding-window realized-vol forecast.  The lower panel shows the stylized carry P\&L after turnover costs; this is an investability screen, not a complete caplet execution model.}
+\end{figure}
 
 \section{How to read the repo}
 Start with this paper for the intuition, then read \texttt{SOFR\_Cap\_Forward\_Volatility.ipynb} for the executed analysis.  The reusable implementation lives in \texttt{src/sofr\_forward\_vol.py}, and the validation tests live in \texttt{tests/test\_sofr\_forward\_vol.py}.

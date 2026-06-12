@@ -11,6 +11,7 @@ attribution.
 
 - `SOFR_Cap_Forward_Volatility.ipynb`: presentation-ready research notebook.
 - `paper/SOFR_Cap_Forward_Volatility_Mini_Paper.pdf`: short mini-paper for first-pass reading.
+- `paper/figures/`: vector figures used in the mini-paper.
 - `src/sofr_forward_vol.py`: reusable curve construction, caplet pricing, and
   regression/strategy utilities.
 - `scripts/fetch_fred_series.py`: optional public-data downloader for macro and
