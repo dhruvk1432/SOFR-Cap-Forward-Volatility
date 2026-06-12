@@ -5,14 +5,19 @@ import pandas as pd
 import pytest
 
 from src.sofr_forward_vol import (
+    PurgedSplitConfig,
     VolCarryConfig,
     black_caplet_price,
     build_vol_carry_frame,
     build_cap_curve,
+    combinatorial_purged_splits,
     expanding_ridge_forecast,
+    forecast_validation_table,
     volatility_carry_backtest,
     load_data,
     normal_caplet_price,
+    purged_blocked_splits,
+    strategy_block_permutation_null,
     strategy_performance,
 )
 
@@ -62,6 +67,66 @@ def test_vol_carry_backtest_uses_only_lagged_forecasts():
     assert {"position", "gross_pnl_bp", "cost_bp", "net_pnl_bp", "cum_net_pnl_bp"}.issubset(bt.columns)
     assert len(bt) > 20
     assert stats["active_periods"] >= 0
+
+
+def test_purged_splits_remove_overlapping_label_windows():
+    index = pd.date_range("2024-01-05", periods=36, freq="W-FRI")
+    horizon = 5
+    embargo = 2
+    splits = purged_blocked_splits(index, n_splits=4, label_horizon=horizon, embargo=embargo)
+    assert len(splits) == 4
+    for train_idx, test_idx in splits:
+        assert not set(train_idx).intersection(set(test_idx))
+        for train in train_idx:
+            train_window = set(range(train, min(len(index), train + horizon + 1)))
+            padded_test = set(
+                range(
+                    max(0, int(test_idx.min()) - embargo),
+                    min(len(index), int(test_idx.max()) + embargo + 1),
+                )
+            )
+            assert train_window.isdisjoint(padded_test)
+
+
+def test_cpcv_and_monte_carlo_are_deterministic():
+    weekly = pd.date_range("2023-01-06", periods=120, freq="W-FRI")
+    rng = np.random.default_rng(1)
+    frame = pd.DataFrame(
+        {
+            "implied_vol": 0.012 + rng.normal(0, 0.0002, len(weekly)),
+            "lag_realized_vol": 0.009 + rng.normal(0, 0.0002, len(weekly)),
+            "vol_slope": 0.002 + rng.normal(0, 0.0001, len(weekly)),
+            "vol_momentum_13w": rng.normal(0, 0.0001, len(weekly)),
+            "vol_of_vol_13w": 0.00015 + rng.normal(0, 0.00002, len(weekly)),
+            "future_realized_vol": 0.010 + rng.normal(0, 0.00025, len(weekly)),
+        },
+        index=weekly,
+    )
+    feature_sets = {
+        "implied_only": ["implied_vol"],
+        "full": ["implied_vol", "lag_realized_vol", "vol_slope", "vol_momentum_13w", "vol_of_vol_13w"],
+    }
+    cfg = PurgedSplitConfig(n_groups=5, n_test_groups=2, label_horizon=4, embargo=1)
+    splits = combinatorial_purged_splits(frame.index, cfg)
+    table = forecast_validation_table(frame, feature_sets, ridges=(1e-5,), split_config=cfg, min_train=20)
+    preds = expanding_ridge_forecast(frame, feature_sets["full"], min_train=20)
+    null_a = strategy_block_permutation_null(
+        frame,
+        preds,
+        VolCarryConfig(min_train_weeks=20, threshold_bp=0.1, realized_window_days=21),
+        n_sims=25,
+        seed=99,
+    )
+    null_b = strategy_block_permutation_null(
+        frame,
+        preds,
+        VolCarryConfig(min_train_weeks=20, threshold_bp=0.1, realized_window_days=21),
+        n_sims=25,
+        seed=99,
+    )
+    assert len(splits) == 10
+    assert not table.empty
+    pd.testing.assert_frame_equal(null_a, null_b)
 
 
 @pytest.mark.skipif(not _has_data(), reason="local raw data not present")

@@ -11,9 +11,10 @@ The central result is intentionally disciplined. The evidence supports a
 persistent forward-volatility premium, but it does not claim that the current
 notebook is a production caplet trading system. The strategy layer is an
 investability test: lagged features, expanding-window ridge forecasts,
-transaction costs, volatility targeting, regime attribution, and bootstrap
-uncertainty are used to decide whether the premium deserves deeper product-level
-execution research.
+transaction costs, leakage-safe volatility targeting, regime attribution,
+purged/CPCV validation, feature ablations, block-bootstrap uncertainty, and
+block-permutation null tests are used to decide whether the premium deserves
+deeper product-level execution research.
 
 ## What is in the repo
 
@@ -45,7 +46,10 @@ The repo is written to make the strength of each claim clear:
    non-overlapping sample counts are reported because the horizon tests overlap.
 4. **Researchable strategy result:** a walk-forward realized-vol forecast and
    cost-aware carry rule produce positive stylized proxy P&L.
-5. **Not yet claimed:** executable caplet alpha. A production version needs
+5. **Anti-overfit evidence:** purged forecast folds, CPCV-style strategy folds,
+   sensitivity checks, and block-permutation nulls reduce the chance that the
+   result is only path fitting.
+6. **Not yet claimed:** executable caplet alpha. A production version needs
    caplet marks, bid/ask, skew, margin, and concrete cap/floor structures.
 
 ## Research design
@@ -63,6 +67,9 @@ The repo is written to make the strength of each claim clear:
 7. Build a walk-forward realized-vol forecast from only lagged information.
 8. Trade a stylized forward-vol carry signal when implied volatility is rich or
    cheap versus that forecast, with transaction costs and risk scaling.
+9. Stress the forecast and strategy with purged/embargoed folds, CPCV-style
+   strategy configurations, block bootstrap intervals, block-permutation nulls,
+   and parameter sensitivity tables.
 
 ## Data
 

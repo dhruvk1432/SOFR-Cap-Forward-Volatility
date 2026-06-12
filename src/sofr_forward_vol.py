@@ -8,6 +8,7 @@ workbooks rather than checked into git.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 from typing import Iterable
 
@@ -48,6 +49,101 @@ class VolCarryConfig:
     transaction_cost_bp: float = 2.0
     risk_target_bp: float = 35.0
     max_abs_position: float = 1.0
+
+
+@dataclass(frozen=True)
+class PurgedSplitConfig:
+    """Configuration for leakage-aware time-series validation.
+
+    ``label_horizon`` and ``embargo`` are measured in rows of the validation
+    frame.  For weekly SOFR labels based on a 63 business-day forward realized
+    window, a 13-row horizon is the natural default.
+    """
+
+    n_groups: int = 6
+    n_test_groups: int = 2
+    label_horizon: int = 13
+    embargo: int = 2
+
+
+def _contiguous_blocks(n_obs: int, n_groups: int) -> list[np.ndarray]:
+    if n_obs <= 0:
+        raise ValueError("n_obs must be positive.")
+    if n_groups < 2:
+        raise ValueError("n_groups must be at least 2.")
+    if n_groups > n_obs:
+        raise ValueError("n_groups cannot exceed the number of observations.")
+    return [block.astype(int) for block in np.array_split(np.arange(n_obs), n_groups) if len(block)]
+
+
+def _purged_train_indices(
+    n_obs: int,
+    test_indices: np.ndarray,
+    label_horizon: int,
+    embargo: int,
+) -> np.ndarray:
+    """Return train rows whose label windows do not overlap the test region."""
+
+    if label_horizon < 0 or embargo < 0:
+        raise ValueError("label_horizon and embargo must be non-negative.")
+    test_indices = np.asarray(test_indices, dtype=int)
+    if len(test_indices) == 0:
+        raise ValueError("test_indices cannot be empty.")
+
+    starts = np.arange(n_obs)
+    ends = starts + int(label_horizon)
+    keep = np.ones(n_obs, dtype=bool)
+    keep[test_indices] = False
+
+    # Purge against every contiguous test block.  This supports CPCV splits
+    # where test groups are not adjacent.
+    split_points = np.where(np.diff(test_indices) > 1)[0] + 1
+    for block in np.split(test_indices, split_points):
+        block_start = max(0, int(block.min()) - int(embargo))
+        block_end = min(n_obs - 1, int(block.max()) + int(embargo))
+        overlaps = (starts <= block_end) & (ends >= block_start)
+        keep &= ~overlaps
+
+    return np.flatnonzero(keep)
+
+
+def purged_blocked_splits(
+    index: Iterable[object],
+    n_splits: int = 5,
+    label_horizon: int = 13,
+    embargo: int = 2,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Create chronological blocked folds with purge and embargo controls."""
+
+    n_obs = len(pd.Index(index))
+    blocks = _contiguous_blocks(n_obs, n_splits)
+    splits = []
+    for test in blocks:
+        train = _purged_train_indices(n_obs, test, label_horizon, embargo)
+        if len(train) and len(test):
+            splits.append((train, test))
+    return splits
+
+
+def combinatorial_purged_splits(
+    index: Iterable[object],
+    config: PurgedSplitConfig | None = None,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Create CPCV-style train/test splits from combinations of time blocks."""
+
+    cfg = config or PurgedSplitConfig()
+    n_obs = len(pd.Index(index))
+    blocks = _contiguous_blocks(n_obs, cfg.n_groups)
+    if cfg.n_test_groups < 1 or cfg.n_test_groups >= len(blocks):
+        raise ValueError("n_test_groups must be between 1 and n_groups - 1.")
+
+    splits = []
+    for group_ids in combinations(range(len(blocks)), cfg.n_test_groups):
+        test = np.sort(np.concatenate([blocks[i] for i in group_ids])).astype(int)
+        train = _purged_train_indices(n_obs, test, cfg.label_horizon, cfg.embargo)
+        if len(train) and len(test):
+            splits.append((train, test))
+    return splits
 
 
 def _find_file(root: Path, filename: str) -> Path:
@@ -502,6 +598,104 @@ def expanding_ridge_forecast(
     return predictions
 
 
+def _ridge_predict_train_test(
+    frame: pd.DataFrame,
+    feature_cols: Iterable[str],
+    train_idx: np.ndarray,
+    test_idx: np.ndarray,
+    target_col: str = "future_realized_vol",
+    ridge: float = 1e-5,
+    min_train: int = 52,
+) -> pd.Series:
+    features = list(feature_cols)
+    clean = frame[features + [target_col]].astype(float)
+    train = clean.iloc[train_idx].dropna()
+    test = clean.iloc[test_idx].dropna(subset=features)
+    predictions = pd.Series(index=frame.index[test_idx], dtype=float, name="prediction")
+    if len(train) < min_train or test.empty:
+        return predictions
+
+    x_train = train[features]
+    y_train = train[target_col]
+    mu = x_train.mean()
+    sigma = x_train.std(ddof=0).replace(0.0, 1.0)
+    x = (x_train - mu) / sigma
+    x = np.column_stack([np.ones(len(x)), x.values])
+    y = y_train.values
+
+    penalty = np.eye(x.shape[1]) * ridge
+    penalty[0, 0] = 0.0
+    beta = np.linalg.solve(x.T @ x + penalty, x.T @ y)
+
+    x_test = (test[features] - mu) / sigma
+    pred = np.column_stack([np.ones(len(x_test)), x_test.values]) @ beta
+    predictions.loc[test.index] = np.maximum(pred, 1e-8)
+    return predictions
+
+
+def forecast_validation_table(
+    frame: pd.DataFrame,
+    feature_sets: dict[str, Iterable[str]],
+    ridges: Iterable[float] = (1e-6, 1e-5, 1e-4),
+    split_config: PurgedSplitConfig | None = None,
+    min_train: int = 52,
+) -> pd.DataFrame:
+    """Evaluate forecast specifications on purged, embargoed blocked folds."""
+
+    cfg = split_config or PurgedSplitConfig()
+    splits = combinatorial_purged_splits(frame.index, cfg)
+    rows = []
+    target = frame["future_realized_vol"].astype(float)
+    for feature_name, cols in feature_sets.items():
+        cols = list(cols)
+        for ridge in ridges:
+            for fold, (train_idx, test_idx) in enumerate(splits):
+                preds = _ridge_predict_train_test(
+                    frame,
+                    cols,
+                    train_idx,
+                    test_idx,
+                    ridge=float(ridge),
+                    min_train=min_train,
+                )
+                aligned = pd.DataFrame({"prediction": preds, "actual": target}).dropna()
+                if aligned.empty:
+                    continue
+                error = aligned["prediction"] - aligned["actual"]
+                corr = aligned["prediction"].corr(aligned["actual"])
+                rows.append(
+                    {
+                        "feature_set": feature_name,
+                        "ridge": float(ridge),
+                        "fold": fold,
+                        "train_n": int(len(train_idx)),
+                        "test_n": int(len(aligned)),
+                        "rmse_bp": float(np.sqrt(np.mean(np.square(error))) * 10000.0),
+                        "mae_bp": float(np.mean(np.abs(error)) * 10000.0),
+                        "bias_bp": float(error.mean() * 10000.0),
+                        "corr": float(corr) if pd.notna(corr) else np.nan,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def summarize_forecast_validation(table: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate fold-level forecast validation into public-facing diagnostics."""
+
+    if table.empty:
+        return pd.DataFrame()
+    grouped = table.groupby(["feature_set", "ridge"], dropna=False)
+    out = grouped.agg(
+        folds=("fold", "nunique"),
+        mean_test_n=("test_n", "mean"),
+        mean_rmse_bp=("rmse_bp", "mean"),
+        mean_mae_bp=("mae_bp", "mean"),
+        mean_bias_bp=("bias_bp", "mean"),
+        mean_corr=("corr", "mean"),
+    )
+    return out.sort_values(["mean_rmse_bp", "mean_mae_bp"])
+
+
 def volatility_carry_backtest(
     frame: pd.DataFrame,
     predictions: pd.Series,
@@ -530,7 +724,7 @@ def volatility_carry_backtest(
 
     forecast_error_vol = (
         data["future_realized_vol"] - data["predicted_realized_vol"]
-    ).rolling(26, min_periods=8).std()
+    ).shift(1).rolling(26, min_periods=8).std()
     risk_scale = (cfg.risk_target_bp / 10000.0) / forecast_error_vol
     risk_scale = risk_scale.replace([np.inf, -np.inf], np.nan).clip(
         lower=0.0,
@@ -548,6 +742,151 @@ def volatility_carry_backtest(
     data["net_pnl_bp"] = data["gross_pnl_bp"] - data["cost_bp"]
     data["cum_net_pnl_bp"] = data["net_pnl_bp"].cumsum()
     return data
+
+
+def strategy_cpcv_table(
+    frame: pd.DataFrame,
+    feature_cols: Iterable[str],
+    configs: Iterable[VolCarryConfig],
+    ridges: Iterable[float] = (1e-5,),
+    split_config: PurgedSplitConfig | None = None,
+) -> pd.DataFrame:
+    """Evaluate pre-declared SOFR carry configurations on CPCV folds."""
+
+    cfg = split_config or PurgedSplitConfig()
+    splits = combinatorial_purged_splits(frame.index, cfg)
+    rows = []
+    for config_id, strategy_cfg in enumerate(configs):
+        for ridge in ridges:
+            for fold, (train_idx, test_idx) in enumerate(splits):
+                preds = _ridge_predict_train_test(
+                    frame,
+                    feature_cols,
+                    train_idx,
+                    test_idx,
+                    ridge=float(ridge),
+                    min_train=strategy_cfg.min_train_weeks,
+                ).rename("predicted_realized_vol")
+                test_frame = frame.iloc[test_idx].copy()
+                bt = volatility_carry_backtest(test_frame, preds, strategy_cfg)
+                stats = strategy_performance(bt)
+                rows.append(
+                    {
+                        "config_id": config_id,
+                        "ridge": float(ridge),
+                        "threshold_bp": strategy_cfg.threshold_bp,
+                        "min_train_weeks": strategy_cfg.min_train_weeks,
+                        "risk_target_bp": strategy_cfg.risk_target_bp,
+                        "transaction_cost_bp": strategy_cfg.transaction_cost_bp,
+                        "fold": fold,
+                        "train_n": int(len(train_idx)),
+                        "test_n": int(len(bt)),
+                        **stats,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def summarize_strategy_cpcv(table: pd.DataFrame) -> pd.DataFrame:
+    if table.empty:
+        return pd.DataFrame()
+    grouped = table.groupby(
+        ["config_id", "ridge", "threshold_bp", "min_train_weeks", "risk_target_bp"],
+        dropna=False,
+    )
+    out = grouped.agg(
+        folds=("fold", "nunique"),
+        mean_test_n=("test_n", "mean"),
+        mean_total_pnl_bp=("total_pnl_bp", "mean"),
+        median_total_pnl_bp=("total_pnl_bp", "median"),
+        positive_fold_rate=("total_pnl_bp", lambda x: float((x > 0).mean())),
+        mean_ann_sharpe=("ann_sharpe", "mean"),
+        worst_drawdown_bp=("max_drawdown_bp", "min"),
+        mean_turnover=("turnover", "mean"),
+    )
+    return out.sort_values(["mean_ann_sharpe", "mean_total_pnl_bp"], ascending=False)
+
+
+def _block_permute_values(values: np.ndarray, block_size: int, rng: np.random.Generator) -> np.ndarray:
+    if block_size <= 0:
+        raise ValueError("block_size must be positive.")
+    blocks = [values[i : i + block_size] for i in range(0, len(values), block_size)]
+    order = rng.permutation(len(blocks))
+    return np.concatenate([blocks[i] for i in order])[: len(values)]
+
+
+def strategy_block_permutation_null(
+    frame: pd.DataFrame,
+    predictions: pd.Series,
+    config: VolCarryConfig | None = None,
+    block_size: int = 8,
+    n_sims: int = 500,
+    seed: int = 7,
+) -> pd.DataFrame:
+    """Block-permute realized-vol labels to test signal/label path fitting."""
+
+    cfg = config or VolCarryConfig()
+    observed_bt = volatility_carry_backtest(frame, predictions, cfg)
+    observed = strategy_performance(observed_bt)
+    base = frame.join(predictions.rename("predicted_realized_vol")).dropna(
+        subset=["implied_vol", "future_realized_vol", "predicted_realized_vol"]
+    )
+    rng = np.random.default_rng(seed)
+    values = base["future_realized_vol"].astype(float).values
+    rows = []
+    for sim in range(n_sims):
+        sim_frame = base.drop(columns=["predicted_realized_vol"]).copy()
+        sim_frame["future_realized_vol"] = _block_permute_values(values, block_size, rng)
+        sim_preds = base["predicted_realized_vol"]
+        sim_bt = volatility_carry_backtest(sim_frame, sim_preds, cfg)
+        stats = strategy_performance(sim_bt)
+        stats["sim"] = sim
+        rows.append(stats)
+    null = pd.DataFrame(rows)
+    null["observed_total_pnl_bp"] = observed["total_pnl_bp"]
+    null["observed_ann_sharpe"] = observed["ann_sharpe"]
+    null["pvalue_total_pnl"] = (null["total_pnl_bp"] >= observed["total_pnl_bp"]).mean()
+    null["pvalue_ann_sharpe"] = (null["ann_sharpe"] >= observed["ann_sharpe"]).mean()
+    return null
+
+
+def block_bootstrap_performance_ci(
+    pnl: pd.Series,
+    block_size: int = 8,
+    n_boot: int = 1000,
+    seed: int = 7,
+    alpha: float = 0.05,
+) -> dict[str, float]:
+    """Block-bootstrap total P&L and Sharpe intervals for dependent P&L."""
+
+    clean = pnl.dropna().astype(float).values
+    if len(clean) == 0:
+        return {
+            "total_pnl_lo": np.nan,
+            "total_pnl_hi": np.nan,
+            "ann_sharpe_lo": np.nan,
+            "ann_sharpe_hi": np.nan,
+        }
+    rng = np.random.default_rng(seed)
+    starts = np.arange(max(1, len(clean) - block_size + 1))
+    totals = []
+    sharpes = []
+    for _ in range(n_boot):
+        draws = []
+        while len(draws) < len(clean):
+            start = int(rng.choice(starts))
+            draws.extend(clean[start : start + block_size])
+        sample = np.asarray(draws[: len(clean)], dtype=float)
+        totals.append(float(sample.sum()))
+        sharpes.append(float(sample.mean() / sample.std(ddof=1) * np.sqrt(52.0)) if sample.std(ddof=1) > 0 else np.nan)
+    lo, hi = np.quantile(totals, [alpha / 2.0, 1.0 - alpha / 2.0])
+    slo, shi = np.nanquantile(sharpes, [alpha / 2.0, 1.0 - alpha / 2.0])
+    return {
+        "total_pnl_lo": float(lo),
+        "total_pnl_hi": float(hi),
+        "ann_sharpe_lo": float(slo),
+        "ann_sharpe_hi": float(shi),
+    }
 
 
 def strategy_performance(

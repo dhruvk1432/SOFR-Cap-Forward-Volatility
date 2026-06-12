@@ -28,9 +28,11 @@ large positive premium relative to later 0.5Y forward vols and forward realized 
 volatility, but overlapping horizons and the short post-2022 sample make naive significance
 claims fragile. A walk-forward ridge forecast converts the premium into a stylized
 rates-volatility carry screen. The screen earns positive after-cost proxy P\&L in the tested
-sample, with annualized Sharpe 2.46, but the block-bootstrap interval for weekly mean P\&L is
-wide. I therefore interpret the result as a research-grade investability test, not as a production
-caplet trading strategy. The production conclusion is narrower and stronger: SOFR cap
+sample, with annualized Sharpe 2.41 after leakage-safe volatility targeting. Purged forecast
+validation, CPCV-style strategy folds, and block-permutation nulls reduce the risk that the
+result is a path-fit artifact, but the block-bootstrap interval still crosses zero. I therefore
+interpret the result as a research-grade investability test, not as a production caplet trading
+strategy. The production conclusion is narrower and stronger: SOFR cap
 forward vols contain an economically meaningful premium, and a disciplined researcher should
 only promote that premium to a trade after caplet-level marks, bid/ask, margin, and execution
 are modeled explicitly.
@@ -62,21 +64,25 @@ vols, reprices each cap as a sum of caplets, and solves the residual marginal ca
 Second, I test the expectations-hypothesis analog with horizon-matched HAC standard errors and
 effective non-overlapping sample counts. Third, I compare implied forward vol with forward
 realized SOFR volatility and policy-cycle regimes. Fourth, I build a walk-forward trading screen
-that uses only lagged information, transaction costs, and volatility targeting.
+that uses only lagged information, transaction costs, and volatility targeting. Fifth, I stress that
+screen with purged and embargoed cross-validation, CPCV-style strategy folds, feature ablations,
+and block-permutation null tests.
 
 The main finding is a premium rather than a clean forecast. The longer forward-vol points are far
 above later realized short forward vols, while the forecasting slopes are far from one. A stylized
-weekly carry rule that sells rich forward vol and buys cheap forward vol earns 1318.41 bp of proxy
-P\&L over 124 backtest observations after a 2 bp turnover cost. The result is strongest in the pause
-and easing regimes. It is not enough evidence to claim executable alpha, because the test is short,
-the product-level mark-to-market is simplified, and the bootstrap interval for weekly mean P\&L
-crosses zero at the lower end. The correct reading is that the premium is economically interesting
-and worth expanding, not that the current notebook is a deployable options book.
+weekly carry rule that sells rich forward vol and buys cheap forward vol earns 1291.21 bp of proxy
+P\&L over 124 backtest observations after a 2 bp turnover cost and lagged risk scaling. The result
+is strongest in the pause and easing regimes. It is not enough evidence to claim executable alpha,
+because the test is short, the product-level mark-to-market is simplified, and the block-bootstrap
+P\&L interval crosses zero at the lower end. The correct reading is that the premium is
+economically interesting and worth expanding, not that the current notebook is a deployable
+options book.
 
 The remainder of the paper is organized as follows. Section 2 places the design in the rates-vol
 and empirical-inference literatures. Section 3 describes the data and caplet stripping procedure.
 Section 4 defines the forecast, premium, and strategy objects. Section 5 reports the main results.
-Section 6 states the implementation gap. Section 7 concludes, and Appendix A gives a
+Section 6 reports robustness and anti-overfit checks. Section 7 states the implementation gap.
+Section 8 concludes, and Appendix A gives a
 claim-by-claim audit of what the repo proves.
 
 \section{Related Literature}
@@ -311,10 +317,10 @@ turnover costs. The headline diagnostics are:
 Diagnostic & Value \\
 \midrule
 Backtest observations & 124 \\
-Total stylized P\&L & 1318.41 bp \\
-Annualized Sharpe & 2.46 \\
+Total stylized P\&L & 1291.21 bp \\
+Annualized Sharpe & 2.41 \\
 Max drawdown & -434.03 bp \\
-Hit rate while active & 70.59\% \\
+Hit rate while active & 70.30\% \\
 Turnover & 15.00 \\
 \bottomrule
 \end{tabular}
@@ -331,9 +337,46 @@ execution model.}
 
 The result is promising, but its interpretation is intentionally bounded. P\&L is concentrated in
 the pause and easing regimes; the hiking regime has no active observations after the minimum
-training window. A block bootstrap for weekly mean P\&L has a wide interval, from roughly
--1.49 bp to 20.72 bp. That does not erase the economic signal. It prevents the paper from treating
-the signal as already production-ready.
+training window. The volatility-targeting scale is computed from lagged forecast errors, so the
+position size at a signal date does not use the current realized-vol label. A block bootstrap for
+total P\&L gives a wide interval, from roughly -286.69 bp to 2605.65 bp, and the corresponding
+Sharpe interval runs from -0.58 to 5.41. That does not erase the economic signal. It prevents the
+paper from treating the signal as already production-ready.
+
+\section{Robustness and Anti-Overfit Controls}
+
+The strongest source of overfitting risk is the short, overlapping-label structure. A 63 business-day
+forward realized-vol label creates dependence across adjacent weekly observations. The notebook
+therefore avoids shuffled cross-validation and uses purged, embargoed chronological folds. For
+forecast validation, the sample is split into six chronological groups, two groups are held out at a
+time, the label horizon is purged by 13 weekly rows, and a two-week embargo is imposed around
+test blocks. The full feature set has the best mean purged-CV RMSE, 58.85 bp, versus 65.71 bp for
+implied-plus-realized features and 68.92 bp for implied vol alone. The result supports using the
+additional curve and volatility-state variables, but the improvement is modest enough to keep the
+claim conservative.
+
+The strategy is tested across pre-declared configurations rather than optimized on the full path.
+Thresholds of 5, 8, and 12 bp, risk targets of 25 and 35 bp, transaction costs of 2 and 4 bp, and two
+ridge penalties are evaluated with CPCV-style folds. The best average CPCV Sharpe is about 1.91,
+and the top configuration has positive total P\&L in 80\% of folds. The base configuration remains
+near the top of the table rather than appearing as a single lucky parameter choice.
+
+Finally, a block-permutation null breaks the alignment between the signal and future realized-vol
+labels while preserving local label dependence. The observed total P\&L of 1291.21 bp has a
+one-sided block-permutation p-value of 0.049; the observed Sharpe has p-value 0.037. The null
+95th percentile of total P\&L is 1285.73 bp, just below the observed value. This is supportive but
+not overwhelming. The correct interpretation is that the signal survives the first serious
+anti-overfit battery, while the bootstrap uncertainty and short regime history still require a
+product-level execution study before any production alpha claim.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.96\textwidth]{figures/sofr_robustness_summary.pdf}
+\caption{Robustness evidence for the SOFR rates-volatility carry screen. The panels show purged
+forecast-CV RMSE by feature set, CPCV strategy Sharpe for pre-declared configurations, and a
+block-permuted null distribution for total P\&L.}
+\label{fig:sofr_robustness}
+\end{figure}
 
 \section{Implementation and Trading Interpretation}
 
@@ -359,9 +402,11 @@ SOFR volatility, while the expectations-hypothesis slopes are far from one.
 
 The trading evidence is useful but deliberately not oversold. A lagged ridge forecast and a
 cost-aware carry screen generate positive stylized P\&L, but the sample is short, the independent
-horizon count is small, and the product-level execution model is not yet complete. The correct
-next step is not to make the language stronger. It is to make the implementation stronger: caplet
-marks, bid/ask, margin, skew, executable structures, and stress tests across rate-vol regimes.
+horizon count is small, and the product-level execution model is not yet complete. The robustness
+layer makes the project harder to dismiss as path fitting, but it does not remove the need for
+instrument-level execution. The correct next step is not to make the language stronger. It is to
+make the implementation stronger: caplet marks, bid/ask, margin, skew, executable structures,
+and stress tests across rate-vol regimes.
 
 \appendix
 \section{Claim-by-Claim Methodology Audit}
@@ -389,9 +434,14 @@ mean premium. &
 The market compensates sellers of forward rates volatility in this sample. \\
 \addlinespace
 The strategy is researchable &
-Walk-forward ridge forecast, lagged features, risk scaling, costs, regime attribution, and
+Walk-forward ridge forecast, lagged features, lagged risk scaling, costs, regime attribution, and
 bootstrap uncertainty are implemented. &
 The signal justifies deeper trading research; it is not yet a caplet execution strategy. \\
+\addlinespace
+The result is not just a path-fit artifact &
+Purged forecast CV, CPCV-style strategy folds, feature ablations, sensitivity tables, and
+block-permutation null tests are implemented. &
+The evidence is robust enough for a research artifact, but the bootstrap interval still crosses zero. \\
 \addlinespace
 The public repo is safe to share &
 Raw workbooks and downloaded public data live outside version control; tests and documentation
