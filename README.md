@@ -12,9 +12,11 @@ persistent forward-volatility premium, but it does not claim that the current
 notebook is a production caplet trading system. The strategy layer is an
 investability test: lagged features, expanding-window ridge forecasts,
 transaction costs, leakage-safe volatility targeting, regime attribution,
-purged/CPCV validation, feature ablations, block-bootstrap uncertainty, and
-block-permutation null tests are used to decide whether the premium deserves
-deeper product-level execution research.
+purged blocked forecast k-fold validation, CPCV-style strategy validation,
+feature ablations, block-bootstrap uncertainty, and block-permutation null
+tests are used to decide whether the premium deserves deeper product-level
+execution research. Volatility targeting waits until the full forward-realized
+volatility horizon has elapsed before using a forecast error for sizing.
 The robustness summaries report mean and median simulated outcomes, including
 median cumulative P&L paths, so the public claim is not based on a single
 average endpoint.
@@ -49,9 +51,9 @@ The repo is written to make the strength of each claim clear:
    non-overlapping sample counts are reported because the horizon tests overlap.
 4. **Researchable strategy result:** a walk-forward realized-vol forecast and
    cost-aware carry rule produce positive stylized proxy P&L.
-5. **Anti-overfit evidence:** purged forecast folds, CPCV-style strategy folds,
-   sensitivity checks, block-permutation nulls, and median bootstrap paths
-   reduce the chance that the result is only path fitting.
+5. **Anti-overfit evidence:** purged blocked forecast k-fold, CPCV-style
+   strategy folds, sensitivity checks, block-permutation nulls, and median
+   bootstrap paths reduce the chance that the result is only path fitting.
 6. **Not yet claimed:** executable caplet alpha. A production version needs
    caplet marks, bid/ask, skew, margin, and concrete cap/floor structures.
 
@@ -70,9 +72,10 @@ The repo is written to make the strength of each claim clear:
 7. Build a walk-forward realized-vol forecast from only lagged information.
 8. Trade a stylized forward-vol carry signal when implied volatility is rich or
    cheap versus that forecast, with transaction costs and risk scaling.
-9. Stress the forecast and strategy with purged/embargoed folds, CPCV-style
-   strategy configurations, block bootstrap intervals, block-permutation nulls,
-   median cumulative path summaries, and parameter sensitivity tables.
+9. Stress the forecast with purged/embargoed blocked k-fold validation and the
+   strategy family with CPCV-style configurations, block bootstrap intervals,
+   block-permutation nulls, median cumulative path summaries, and parameter
+   sensitivity tables.
 
 ## Data
 

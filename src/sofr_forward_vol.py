@@ -50,6 +50,12 @@ class VolCarryConfig:
     risk_target_bp: float = 35.0
     max_abs_position: float = 1.0
 
+    @property
+    def label_horizon_rows(self) -> int:
+        """Rows before forward-realized-vol outcomes can be observed."""
+
+        return max(1, int(np.ceil(self.realized_window_days / 5.0)))
+
 
 @dataclass(frozen=True)
 class PurgedSplitConfig:
@@ -76,6 +82,14 @@ def _contiguous_blocks(n_obs: int, n_groups: int) -> list[np.ndarray]:
     return [block.astype(int) for block in np.array_split(np.arange(n_obs), n_groups) if len(block)]
 
 
+def _split_contiguous_indices(indices: np.ndarray) -> list[np.ndarray]:
+    indices = np.sort(np.asarray(indices, dtype=int))
+    if len(indices) == 0:
+        return []
+    split_points = np.where(np.diff(indices) > 1)[0] + 1
+    return [block.astype(int) for block in np.split(indices, split_points)]
+
+
 def _purged_train_indices(
     n_obs: int,
     test_indices: np.ndarray,
@@ -97,8 +111,7 @@ def _purged_train_indices(
 
     # Purge against every contiguous test block.  This supports CPCV splits
     # where test groups are not adjacent.
-    split_points = np.where(np.diff(test_indices) > 1)[0] + 1
-    for block in np.split(test_indices, split_points):
+    for block in _split_contiguous_indices(test_indices):
         block_start = max(0, int(block.min()) - int(embargo))
         block_end = min(n_obs - 1, int(block.max()) + int(embargo))
         overlaps = (starts <= block_end) & (ends >= block_start)
@@ -640,10 +653,20 @@ def forecast_validation_table(
     split_config: PurgedSplitConfig | None = None,
     min_train: int = 52,
 ) -> pd.DataFrame:
-    """Evaluate forecast specifications on purged, embargoed blocked folds."""
+    """Evaluate forecast specifications on purged, embargoed k-fold blocks.
+
+    Forecast-model selection uses chronological blocked k-fold validation.  The
+    combinatorial CPCV split is reserved for the strategy-configuration layer,
+    where we compare a pre-declared family of trading rules.
+    """
 
     cfg = split_config or PurgedSplitConfig()
-    splits = combinatorial_purged_splits(frame.index, cfg)
+    splits = purged_blocked_splits(
+        frame.index,
+        n_splits=cfg.n_groups,
+        label_horizon=cfg.label_horizon,
+        embargo=cfg.embargo,
+    )
     rows = []
     target = frame["future_realized_vol"].astype(float)
     for feature_name, cols in feature_sets.items():
@@ -667,6 +690,7 @@ def forecast_validation_table(
                     {
                         "feature_set": feature_name,
                         "ridge": float(ridge),
+                        "validation_scheme": "purged_blocked_kfold",
                         "fold": fold,
                         "train_n": int(len(train_idx)),
                         "test_n": int(len(aligned)),
@@ -724,7 +748,7 @@ def volatility_carry_backtest(
 
     forecast_error_vol = (
         data["future_realized_vol"] - data["predicted_realized_vol"]
-    ).shift(1).rolling(26, min_periods=8).std()
+    ).shift(cfg.label_horizon_rows).rolling(26, min_periods=8).std()
     risk_scale = (cfg.risk_target_bp / 10000.0) / forecast_error_vol
     risk_scale = risk_scale.replace([np.inf, -np.inf], np.nan).clip(
         lower=0.0,
@@ -774,6 +798,7 @@ def strategy_cpcv_table(
                     {
                         "config_id": config_id,
                         "ridge": float(ridge),
+                        "validation_scheme": "combinatorial_purged_cv",
                         "threshold_bp": strategy_cfg.threshold_bp,
                         "min_train_weeks": strategy_cfg.min_train_weeks,
                         "risk_target_bp": strategy_cfg.risk_target_bp,

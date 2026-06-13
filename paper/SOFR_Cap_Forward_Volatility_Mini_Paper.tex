@@ -28,7 +28,7 @@ large positive premium relative to later 0.5Y forward vols and forward realized 
 volatility, but overlapping horizons and the short post-2022 sample make naive significance
 claims fragile. A walk-forward ridge forecast converts the premium into a stylized
 rates-volatility carry screen. The screen earns positive after-cost proxy P\&L in the tested
-sample, with annualized Sharpe 2.41 after leakage-safe volatility targeting. Purged forecast
+sample, with annualized Sharpe 1.88 after leakage-safe volatility targeting. Purged forecast
 validation, CPCV-style strategy folds, and block-permutation nulls reduce the risk that the
 result is a path-fit artifact, and the block-bootstrap median path remains positive, but the
 block-bootstrap lower interval still crosses zero. I therefore
@@ -71,7 +71,7 @@ and block-permutation null tests.
 
 The main finding is a premium rather than a clean forecast. The longer forward-vol points are far
 above later realized short forward vols, while the forecasting slopes are far from one. A stylized
-weekly carry rule that sells rich forward vol and buys cheap forward vol earns 1291.21 bp of proxy
+weekly carry rule that sells rich forward vol and buys cheap forward vol earns 967.14 bp of proxy
 P\&L over 124 backtest observations after a 2 bp turnover cost and lagged risk scaling. The result
 is strongest in the pause and easing regimes. It is not enough evidence to claim executable alpha,
 because the test is short, the product-level mark-to-market is simplified, and the block-bootstrap
@@ -318,10 +318,10 @@ turnover costs. The headline diagnostics are:
 Diagnostic & Value \\
 \midrule
 Backtest observations & 124 \\
-Total stylized P\&L & 1291.21 bp \\
-Annualized Sharpe & 2.41 \\
+Total stylized P\&L & 967.14 bp \\
+Annualized Sharpe & 1.88 \\
 Max drawdown & -434.03 bp \\
-Hit rate while active & 70.30\% \\
+Hit rate while active & 67.74\% \\
 Turnover & 15.00 \\
 \bottomrule
 \end{tabular}
@@ -338,11 +338,12 @@ execution model.}
 
 The result is promising, but its interpretation is intentionally bounded. P\&L is concentrated in
 the pause and easing regimes; the hiking regime has no active observations after the minimum
-training window. The volatility-targeting scale is computed from lagged forecast errors, so the
-position size at a signal date does not use the current realized-vol label. A block bootstrap for
-total P\&L gives a wide interval, from roughly -286.69 bp to 2605.65 bp, and the corresponding
-Sharpe interval runs from -0.58 to 5.41. The median bootstrap endpoint is 1160.82 bp, close to
-the mean bootstrap endpoint of 1149.68 bp, so the positive result is not just a mean-path artifact.
+training window. The volatility-targeting scale is computed from forecast errors lagged by the
+full forward-realized-vol horizon, so the position size at a signal date does not use realized-vol
+labels before they would be observable. A block bootstrap for total P\&L gives a wide interval,
+from roughly -537.87 bp to 2181.38 bp, and the corresponding Sharpe interval runs from -1.09
+to 4.64. The median bootstrap endpoint is 800.60 bp, close to the mean bootstrap endpoint of
+812.46 bp, so the positive result is not just a mean-path artifact.
 That does not erase the economic signal. It prevents the paper from treating the signal as already
 production-ready.
 
@@ -351,28 +352,29 @@ production-ready.
 The strongest source of overfitting risk is the short, overlapping-label structure. A 63 business-day
 forward realized-vol label creates dependence across adjacent weekly observations. The notebook
 therefore avoids shuffled cross-validation and uses purged, embargoed chronological folds. For
-forecast validation, the sample is split into six chronological groups, two groups are held out at a
-time, the label horizon is purged by 13 weekly rows, and a two-week embargo is imposed around
-test blocks. The full feature set has the best mean purged-CV RMSE, 58.85 bp, versus 65.71 bp for
-implied-plus-realized features and 68.92 bp for implied vol alone. The result supports using the
+forecast validation, the sample is split into six chronological blocked k-fold groups, the label
+horizon is purged by 13 weekly rows, and a two-week embargo is imposed around test blocks.
+The full feature set has the best mean purged-CV RMSE, 55.94 bp, versus 58.28 bp for
+implied-plus-realized features and 61.12 bp for implied vol alone. The result supports using the
 additional curve and volatility-state variables, but the improvement is modest enough to keep the
 claim conservative.
 
 The strategy is tested across pre-declared configurations rather than optimized on the full path.
 Thresholds of 5, 8, and 12 bp, risk targets of 25 and 35 bp, transaction costs of 2 and 4 bp, and two
-ridge penalties are evaluated with CPCV-style folds. The best average CPCV Sharpe is about 1.91,
-and the top configuration has positive total P\&L in 80\% of folds. The base configuration remains
-near the top of the table rather than appearing as a single lucky parameter choice.
+ridge penalties are evaluated with CPCV-style folds. The best average CPCV Sharpe is about 1.95,
+with positive total P\&L in two-thirds of folds. The base 8 bp threshold, 35 bp risk-target
+configuration remains near the top, with mean fold Sharpe about 1.90 and positive P\&L in
+73.3\% of folds, rather than appearing as a single lucky parameter choice.
 
 Finally, a block-permutation null breaks the alignment between the signal and future realized-vol
 labels while preserving local label dependence. This is a nonparametric null: it does not assume
-Gaussian forecast errors or thin-tailed volatility shocks. The observed total P\&L of 1291.21 bp
-has a one-sided block-permutation p-value of 0.049; the observed Sharpe has p-value 0.037. The
-null mean and median total P\&L are 91.59 bp and 76.39 bp, and the null 95th percentile is
-1285.73 bp, just below the observed value. This is supportive but not overwhelming. The correct
-interpretation is that the signal survives the first serious anti-overfit battery, while the
-bootstrap uncertainty and short regime history still require a product-level execution study
-before any production alpha claim.
+Gaussian forecast errors or thin-tailed volatility shocks. The observed total P\&L of 967.14 bp
+has a one-sided block-permutation p-value of 0.079; the observed Sharpe has p-value 0.062. The
+null mean and median total P\&L are -49.33 bp and -95.21 bp, while the null 95th percentile is
+1160.26 bp. This is supportive but below a strict 5\% threshold. The correct interpretation is that
+the signal remains economically plausible after anti-overfit controls, while the bootstrap
+uncertainty and short regime history still require a product-level execution study before any
+production alpha claim.
 
 \begin{figure}[H]
 \centering
