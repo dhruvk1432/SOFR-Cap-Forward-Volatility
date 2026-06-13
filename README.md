@@ -15,6 +15,9 @@ transaction costs, leakage-safe volatility targeting, regime attribution,
 purged/CPCV validation, feature ablations, block-bootstrap uncertainty, and
 block-permutation null tests are used to decide whether the premium deserves
 deeper product-level execution research.
+The robustness summaries report mean and median simulated outcomes, including
+median cumulative P&L paths, so the public claim is not based on a single
+average endpoint.
 
 ## What is in the repo
 
@@ -47,8 +50,8 @@ The repo is written to make the strength of each claim clear:
 4. **Researchable strategy result:** a walk-forward realized-vol forecast and
    cost-aware carry rule produce positive stylized proxy P&L.
 5. **Anti-overfit evidence:** purged forecast folds, CPCV-style strategy folds,
-   sensitivity checks, and block-permutation nulls reduce the chance that the
-   result is only path fitting.
+   sensitivity checks, block-permutation nulls, and median bootstrap paths
+   reduce the chance that the result is only path fitting.
 6. **Not yet claimed:** executable caplet alpha. A production version needs
    caplet marks, bid/ask, skew, margin, and concrete cap/floor structures.
 
@@ -69,7 +72,7 @@ The repo is written to make the strength of each claim clear:
    cheap versus that forecast, with transaction costs and risk scaling.
 9. Stress the forecast and strategy with purged/embargoed folds, CPCV-style
    strategy configurations, block bootstrap intervals, block-permutation nulls,
-   and parameter sensitivity tables.
+   median cumulative path summaries, and parameter sensitivity tables.
 
 ## Data
 

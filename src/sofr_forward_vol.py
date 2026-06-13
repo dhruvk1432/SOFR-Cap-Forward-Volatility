@@ -847,6 +847,10 @@ def strategy_block_permutation_null(
     null["observed_ann_sharpe"] = observed["ann_sharpe"]
     null["pvalue_total_pnl"] = (null["total_pnl_bp"] >= observed["total_pnl_bp"]).mean()
     null["pvalue_ann_sharpe"] = (null["ann_sharpe"] >= observed["ann_sharpe"]).mean()
+    null["mean_sim_total_pnl_bp"] = null["total_pnl_bp"].mean()
+    null["median_sim_total_pnl_bp"] = null["total_pnl_bp"].median()
+    null["mean_sim_ann_sharpe"] = null["ann_sharpe"].mean()
+    null["median_sim_ann_sharpe"] = null["ann_sharpe"].median()
     return null
 
 
@@ -863,8 +867,10 @@ def block_bootstrap_performance_ci(
     if len(clean) == 0:
         return {
             "total_pnl_lo": np.nan,
+            "total_pnl_median": np.nan,
             "total_pnl_hi": np.nan,
             "ann_sharpe_lo": np.nan,
+            "ann_sharpe_median": np.nan,
             "ann_sharpe_hi": np.nan,
         }
     rng = np.random.default_rng(seed)
@@ -879,14 +885,59 @@ def block_bootstrap_performance_ci(
         sample = np.asarray(draws[: len(clean)], dtype=float)
         totals.append(float(sample.sum()))
         sharpes.append(float(sample.mean() / sample.std(ddof=1) * np.sqrt(52.0)) if sample.std(ddof=1) > 0 else np.nan)
-    lo, hi = np.quantile(totals, [alpha / 2.0, 1.0 - alpha / 2.0])
-    slo, shi = np.nanquantile(sharpes, [alpha / 2.0, 1.0 - alpha / 2.0])
+    lo, median, hi = np.quantile(totals, [alpha / 2.0, 0.50, 1.0 - alpha / 2.0])
+    slo, smedian, shi = np.nanquantile(sharpes, [alpha / 2.0, 0.50, 1.0 - alpha / 2.0])
     return {
         "total_pnl_lo": float(lo),
+        "total_pnl_median": float(median),
         "total_pnl_hi": float(hi),
         "ann_sharpe_lo": float(slo),
+        "ann_sharpe_median": float(smedian),
         "ann_sharpe_hi": float(shi),
     }
+
+
+def block_bootstrap_path_summary(
+    pnl: pd.Series,
+    block_size: int = 8,
+    n_boot: int = 1000,
+    seed: int = 7,
+    alpha: float = 0.10,
+) -> pd.DataFrame:
+    """Return observed, mean, median, and tail bootstrap cumulative P&L paths.
+
+    The path summary is deliberately nonparametric.  It resamples contiguous
+    P&L blocks rather than assuming a Gaussian return distribution, which is
+    more appropriate for overlapping forward-volatility labels and crisis-like
+    clustered losses.
+    """
+
+    clean = pnl.dropna().astype(float).values
+    if len(clean) == 0:
+        return pd.DataFrame(columns=["observed_path", "mean_path", "median_path", "lower_path", "upper_path"])
+
+    rng = np.random.default_rng(seed)
+    starts = np.arange(max(1, len(clean) - block_size + 1))
+    paths = np.empty((n_boot, len(clean)), dtype=float)
+    for sim in range(n_boot):
+        draws = []
+        while len(draws) < len(clean):
+            start = int(rng.choice(starts))
+            draws.extend(clean[start : start + block_size])
+        paths[sim] = np.cumsum(np.asarray(draws[: len(clean)], dtype=float))
+
+    observed = np.cumsum(clean)
+    lo_q, hi_q = alpha / 2.0, 1.0 - alpha / 2.0
+    return pd.DataFrame(
+        {
+            "observed_path": observed,
+            "mean_path": paths.mean(axis=0),
+            "median_path": np.median(paths, axis=0),
+            "lower_path": np.quantile(paths, lo_q, axis=0),
+            "upper_path": np.quantile(paths, hi_q, axis=0),
+        },
+        index=np.arange(1, len(clean) + 1),
+    )
 
 
 def strategy_performance(

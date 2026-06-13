@@ -8,6 +8,7 @@ from src.sofr_forward_vol import (
     PurgedSplitConfig,
     VolCarryConfig,
     black_caplet_price,
+    block_bootstrap_path_summary,
     build_vol_carry_frame,
     build_cap_curve,
     combinatorial_purged_splits,
@@ -124,9 +125,13 @@ def test_cpcv_and_monte_carlo_are_deterministic():
         n_sims=25,
         seed=99,
     )
+    path_a = block_bootstrap_path_summary(null_a["total_pnl_bp"], block_size=5, n_boot=25, seed=99)
+    path_b = block_bootstrap_path_summary(null_a["total_pnl_bp"], block_size=5, n_boot=25, seed=99)
     assert len(splits) == 10
     assert not table.empty
     pd.testing.assert_frame_equal(null_a, null_b)
+    pd.testing.assert_frame_equal(path_a, path_b)
+    assert {"observed_path", "mean_path", "median_path", "lower_path", "upper_path"}.issubset(path_a.columns)
 
 
 @pytest.mark.skipif(not _has_data(), reason="local raw data not present")

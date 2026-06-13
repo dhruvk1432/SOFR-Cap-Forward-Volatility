@@ -30,7 +30,8 @@ claims fragile. A walk-forward ridge forecast converts the premium into a styliz
 rates-volatility carry screen. The screen earns positive after-cost proxy P\&L in the tested
 sample, with annualized Sharpe 2.41 after leakage-safe volatility targeting. Purged forecast
 validation, CPCV-style strategy folds, and block-permutation nulls reduce the risk that the
-result is a path-fit artifact, but the block-bootstrap interval still crosses zero. I therefore
+result is a path-fit artifact, and the block-bootstrap median path remains positive, but the
+block-bootstrap lower interval still crosses zero. I therefore
 interpret the result as a research-grade investability test, not as a production caplet trading
 strategy. The production conclusion is narrower and stronger: SOFR cap
 forward vols contain an economically meaningful premium, and a disciplined researcher should
@@ -340,8 +341,10 @@ the pause and easing regimes; the hiking regime has no active observations after
 training window. The volatility-targeting scale is computed from lagged forecast errors, so the
 position size at a signal date does not use the current realized-vol label. A block bootstrap for
 total P\&L gives a wide interval, from roughly -286.69 bp to 2605.65 bp, and the corresponding
-Sharpe interval runs from -0.58 to 5.41. That does not erase the economic signal. It prevents the
-paper from treating the signal as already production-ready.
+Sharpe interval runs from -0.58 to 5.41. The median bootstrap endpoint is 1160.82 bp, close to
+the mean bootstrap endpoint of 1149.68 bp, so the positive result is not just a mean-path artifact.
+That does not erase the economic signal. It prevents the paper from treating the signal as already
+production-ready.
 
 \section{Robustness and Anti-Overfit Controls}
 
@@ -362,19 +365,22 @@ and the top configuration has positive total P\&L in 80\% of folds. The base con
 near the top of the table rather than appearing as a single lucky parameter choice.
 
 Finally, a block-permutation null breaks the alignment between the signal and future realized-vol
-labels while preserving local label dependence. The observed total P\&L of 1291.21 bp has a
-one-sided block-permutation p-value of 0.049; the observed Sharpe has p-value 0.037. The null
-95th percentile of total P\&L is 1285.73 bp, just below the observed value. This is supportive but
-not overwhelming. The correct interpretation is that the signal survives the first serious
-anti-overfit battery, while the bootstrap uncertainty and short regime history still require a
-product-level execution study before any production alpha claim.
+labels while preserving local label dependence. This is a nonparametric null: it does not assume
+Gaussian forecast errors or thin-tailed volatility shocks. The observed total P\&L of 1291.21 bp
+has a one-sided block-permutation p-value of 0.049; the observed Sharpe has p-value 0.037. The
+null mean and median total P\&L are 91.59 bp and 76.39 bp, and the null 95th percentile is
+1285.73 bp, just below the observed value. This is supportive but not overwhelming. The correct
+interpretation is that the signal survives the first serious anti-overfit battery, while the
+bootstrap uncertainty and short regime history still require a product-level execution study
+before any production alpha claim.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.96\textwidth]{figures/sofr_robustness_summary.pdf}
 \caption{Robustness evidence for the SOFR rates-volatility carry screen. The panels show purged
 forecast-CV RMSE by feature set, CPCV strategy Sharpe for pre-declared configurations, and a
-block-permuted null distribution for total P\&L.}
+block-permuted null distribution for total P\&L, plus observed, mean, and median block-bootstrap
+cumulative P\&L paths.}
 \label{fig:sofr_robustness}
 \end{figure}
 
