@@ -6,7 +6,9 @@ data/raw/
 .ipynb_checkpoints/
 __pycache__/
 *.py[cod]
+*.egg-info/
 *.png
+!figures/*.png
 .pytest_cache/
 *.aux
 *.log
@@ -15,3 +17,13 @@ __pycache__/
 *.fls
 *.fdb_latexmk
 *.synctex.gz
+
+.codex/
+data/processed/
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.synctex.gz

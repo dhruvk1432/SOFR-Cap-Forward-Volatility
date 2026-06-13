@@ -2,7 +2,7 @@
 
 The core project runs from the local course workbooks.  This helper is for
 research extensions that condition rates-vol signals on macro/rates regimes.
-It requires no API key because it uses FRED's public graph CSV endpoint.
+It requires no credentials because it uses FRED's public graph CSV endpoint.
 Downloaded CSV files are intentionally ignored by git.
 """
 

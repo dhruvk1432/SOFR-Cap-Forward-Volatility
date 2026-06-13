@@ -6,21 +6,23 @@ import pytest
 
 from src.sofr_forward_vol import (
     PurgedSplitConfig,
+    SofrCapData,
     VolCarryConfig,
     black_caplet_price,
     block_bootstrap_path_summary,
-    build_vol_carry_frame,
+    bootstrap_discount_curve,
     build_cap_curve,
+    build_vol_carry_frame,
     combinatorial_purged_splits,
     expanding_ridge_forecast,
     forecast_validation_table,
-    volatility_carry_backtest,
     load_data,
     normal_caplet_price,
     purged_blocked_splits,
     strategy_block_permutation_null,
     strategy_cpcv_table,
     strategy_performance,
+    volatility_carry_backtest,
 )
 
 
@@ -48,13 +50,62 @@ def _assert_no_label_overlap(splits, n_obs: int, horizon: int, embargo: int) -> 
                 assert train_window.isdisjoint(padded_test)
 
 
-def test_caplet_prices_are_monotone_in_vol():
+def test_caplet_prices_are_monotone_and_converge_to_intrinsic():
     low_black = black_caplet_price(0.10, 1.0, 0.04, 0.041, 0.96)
     high_black = black_caplet_price(0.30, 1.0, 0.04, 0.041, 0.96)
     low_normal = normal_caplet_price(0.005, 1.0, 0.04, 0.041, 0.96)
     high_normal = normal_caplet_price(0.015, 1.0, 0.04, 0.041, 0.96)
+    intrinsic = 0.96 * max(0.041 - 0.04, 0.0)
     assert high_black > low_black
     assert high_normal > low_normal
+    assert black_caplet_price(0.0, 1.0, 0.04, 0.041, 0.96) == pytest.approx(intrinsic)
+    assert normal_caplet_price(0.0, 1.0, 0.04, 0.041, 0.96) == pytest.approx(intrinsic)
+
+
+def test_bootstrap_discount_curve_is_positive_and_decreasing():
+    quotes = pd.Series(
+        [0.045, 0.046, 0.047, 0.048, 0.049],
+        index=[0.25, 1.0, 2.0, 5.0, 10.0],
+    )
+    curve = bootstrap_discount_curve(quotes)
+    assert (curve["discount"] > 0).all()
+    assert curve["discount"].is_monotonic_decreasing
+    assert curve["forward_rate"].iloc[1:].notna().all()
+
+
+def _synthetic_data() -> SofrCapData:
+    date = pd.Timestamp("2025-06-30")
+    maturities = [1.0, 1.5, 2.0, 3.0, 5.0]
+    cap = pd.DataFrame([[75.0, 85.0, 95.0, 105.0, 115.0]], index=[date], columns=maturities)
+    sofr = pd.DataFrame([[0.040, 0.041, 0.042, 0.043, 0.044]], index=[date], columns=[0.25, 1.0, 2.0, 5.0, 10.0])
+    daily = pd.Series(0.04, index=pd.date_range("2024-01-01", "2025-12-31", freq="B"), name="SOFR")
+    return SofrCapData(cap, sofr, daily)
+
+
+def test_cap_repricing_identity_holds_after_stripping():
+    data = _synthetic_data()
+    curve = build_cap_curve("2025-06-30", data, max_tenor=5.0, interpolation="pchip")
+    for tenor in [1.0, 1.5, 2.0, 3.0, 5.0]:
+        strike = curve.loc[tenor, "swap_rate_quarterly"]
+        flat = curve.loc[tenor, "flat_black_vol"]
+        flat_price = 0.0
+        stripped_price = 0.0
+        for pay_tenor in np.round(np.arange(0.50, tenor + 0.001, 0.25), 2):
+            flat_price += black_caplet_price(
+                flat,
+                pay_tenor - 0.25,
+                strike,
+                curve.loc[pay_tenor, "forward_rate"],
+                curve.loc[pay_tenor, "discount"],
+            )
+            stripped_price += black_caplet_price(
+                curve.loc[pay_tenor, "forward_black_vol"],
+                pay_tenor - 0.25,
+                strike,
+                curve.loc[pay_tenor, "forward_rate"],
+                curve.loc[pay_tenor, "discount"],
+            )
+        assert stripped_price == pytest.approx(flat_price, rel=1e-8, abs=1e-10)
 
 
 def test_vol_carry_backtest_uses_only_lagged_forecasts():
@@ -72,11 +123,13 @@ def test_vol_carry_backtest_uses_only_lagged_forecasts():
     )
 
     frame = build_vol_carry_frame(panel, sofr, tenor=0.50, realized_window_days=21)
-    preds = expanding_ridge_forecast(
-        frame,
-        ["implied_vol", "lag_realized_vol", "vol_slope", "vol_momentum_13w", "vol_of_vol_13w"],
-        min_train=20,
-    )
+    features = ["implied_vol", "lag_realized_vol", "vol_slope", "vol_momentum_13w", "vol_of_vol_13w"]
+    preds = expanding_ridge_forecast(frame, features, min_train=20)
+    target_date = preds.dropna().index[5]
+    truncated = frame.loc[:target_date]
+    truncated_preds = expanding_ridge_forecast(truncated, features, min_train=20)
+    assert preds.loc[target_date] == pytest.approx(truncated_preds.loc[target_date])
+
     bt = volatility_carry_backtest(
         frame,
         preds,
@@ -153,8 +206,8 @@ def test_cpcv_and_monte_carlo_are_deterministic():
     path_b = block_bootstrap_path_summary(null_a["total_pnl_bp"], block_size=5, n_boot=25, seed=99)
     assert len(splits) == 10
     assert not table.empty
-    assert table["validation_scheme"].eq("purged_blocked_kfold").all()
-    assert table["fold"].nunique() == cfg.n_groups
+    assert table["validation_scheme"].eq("combinatorial_purged_cv").all()
+    assert table["fold"].nunique() == len(splits)
     assert strategy_table["validation_scheme"].eq("combinatorial_purged_cv").all()
     assert strategy_table["fold"].nunique() == len(splits)
     pd.testing.assert_frame_equal(null_a, null_b)

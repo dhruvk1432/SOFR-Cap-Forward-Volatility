@@ -1,0 +1,5 @@
+,max,mean,max_bp_or_abs
+discount_error,0.0,0.0,0.0
+forward_rate_error,0.0,0.0,1.252
+flat_black_vol_error,0.002,0.0,23.109
+forward_black_vol_error,0.002,0.0,23.109

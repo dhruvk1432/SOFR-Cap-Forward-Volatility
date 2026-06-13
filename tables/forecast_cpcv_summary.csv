@@ -1,0 +1,10 @@
+,feature_set,ridge,folds,mean_test_n,mean_rmse_bp,mean_mae_bp,mean_bias_bp,mean_corr
+0,full_macro_curve_proxy,1e-04,15,58.667,58.846,46.636,-14.944,0.335
+1,full_macro_curve_proxy,1e-05,15,58.667,58.846,46.636,-14.944,0.335
+2,full_macro_curve_proxy,1e-06,15,58.667,58.846,46.636,-14.944,0.335
+3,implied_plus_realized,1e-04,15,63.0,65.708,56.984,4.292,0.401
+4,implied_plus_realized,1e-05,15,63.0,65.708,56.984,4.292,0.401
+5,implied_plus_realized,1e-06,15,63.0,65.708,56.984,4.292,0.401
+6,implied_only,1e-04,15,63.0,68.923,57.994,0.656,0.282
+7,implied_only,1e-05,15,63.0,68.923,57.994,0.656,0.282
+8,implied_only,1e-06,15,63.0,68.923,57.994,0.656,0.282

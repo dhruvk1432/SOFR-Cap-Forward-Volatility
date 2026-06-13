@@ -1,0 +1,7 @@
+measure,regime,mean_bp,std_bp,frac_positive,n
+term_premium_1Y,Easing,25.79,13.339,0.977,44
+term_premium_1Y,Hiking,66.13,60.28,0.917,72
+term_premium_1Y,Pause,39.534,33.971,0.842,57
+vrp_3M,Easing,16.978,24.869,0.804,51
+vrp_3M,Hiking,20.307,73.633,0.597,72
+vrp_3M,Pause,60.682,47.82,0.807,57

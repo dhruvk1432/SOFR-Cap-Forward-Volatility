@@ -1,103 +1,208 @@
 # SOFR Cap Forward Volatility
 
-This repository studies whether the forward-volatility curve implied by SOFR
-caps behaves like an expectations curve or like a compensated volatility-risk
-premium. The project strips caplet-level forward normal volatility from quoted
-SOFR cap flat vols, validates the curve construction, tests the
-expectations-hypothesis analog, and then turns the premium into a walk-forward
-rates-volatility carry screen.
+**Rates-volatility research repository | Public recruiter/trader artifact**
 
-The central result is intentionally disciplined. The evidence supports a
-persistent forward-volatility premium, but it does not claim that the current
-notebook is a production caplet trading system. The strategy layer is an
-investability test: lagged features, expanding-window ridge forecasts,
-transaction costs, leakage-safe volatility targeting, regime attribution,
-purged blocked forecast k-fold validation, CPCV-style strategy validation,
-feature ablations, block-bootstrap uncertainty, and block-permutation null
-tests are used to decide whether the premium deserves deeper product-level
-execution research. Volatility targeting waits until the full forward-realized
-volatility horizon has elapsed before using a forecast error for sizing.
-The robustness summaries report mean and median simulated outcomes, including
-median cumulative P&L paths, so the public claim is not based on a single
-average endpoint.
+This project studies whether the forward-volatility curve implied by SOFR
+caps behaves like an expectations curve or like a compensated
+rates-volatility risk-premium curve. The repo strips caplet-level forward
+normal volatility from SOFR cap flat vols, validates the curve construction,
+tests the expectations-hypothesis analog, and turns the premium into a
+leakage-aware rates-vol carry research screen.
 
-## What is in the repo
+The public claim is intentionally bounded. The evidence supports a
+persistent forward-volatility premium and a researchable carry screen. It
+does **not** claim executable caplet alpha. A production trading system
+would require caplet marks, bid/ask, skew, margin, funding, liquidation
+rules, and concrete cap/floor structures.
 
-- `SOFR_Cap_Forward_Volatility.ipynb`: executed research notebook.
-- `paper/SOFR_Cap_Forward_Volatility_Mini_Paper.pdf`: single-column empirical
-  paper explaining the research object, methodology, results, limitations, and
-  claim audit.
-- `paper/figures/`: vector figures used in the paper.
-- `src/sofr_forward_vol.py`: reusable curve construction, caplet pricing,
-  regression, and strategy utilities.
-- `scripts/fetch_fred_series.py`: optional public-data downloader for macro and
-  rate-regime context. Downloaded CSV files stay under ignored `data/raw/`.
-- `docs/knowledge_base_protocol.md`: local NotebookLM/knowledge-base protocol
-  used to ground the research extension without shipping private research
-  material.
-- `tests/test_sofr_forward_vol.py`: smoke tests for the reusable implementation.
-- `data/README.md`: data contract and public-repo policy.
+**Final deliverables**
 
-## Claim hierarchy
+- [Final paper PDF](paper/SOFR_Cap_Forward_Volatility.pdf)
+- [Final LaTeX source](paper/SOFR_Cap_Forward_Volatility.tex)
+- [Reproducible analysis pipeline](run_all.py)
+- [Generated tables and numeric provenance](tables/)
+- [README-ready figures](figures/)
+- [Paper vector figures](paper/figures/)
+- [Artifact manifest](artifact_manifest.json)
 
-The repo is written to make the strength of each claim clear:
+## Executive Summary
 
-1. **Implemented and validated:** SOFR cap flat vols are converted into a
-   caplet-level forward normal-volatility curve.
-2. **Strong descriptive result:** longer forward-vol points are far above later
-   short forward vols and forward realized SOFR volatility in the post-2022
-   sample.
-3. **Disciplined inference:** HAC standard errors and effective
-   non-overlapping sample counts are reported because the horizon tests overlap.
-4. **Researchable strategy result:** a walk-forward realized-vol forecast and
-   cost-aware carry rule produce positive stylized proxy P&L.
-5. **Anti-overfit evidence:** purged blocked forecast k-fold, CPCV-style
-   strategy folds, sensitivity checks, block-permutation nulls, and median
-   bootstrap paths reduce the chance that the result is only path fitting.
-6. **Not yet claimed:** executable caplet alpha. A production version needs
-   caplet marks, bid/ask, skew, margin, and concrete cap/floor structures.
+SOFR caps quote a flat volatility for a package of caplets. This project
+strips the package into marginal forward-volatility points and asks a
+trading question: are longer SOFR cap forward vols mostly forecasts of
+future short-tenor volatility, or do they embed a risk premium that can be
+monitored and potentially harvested?
 
-## Research design
+The answer is a premium, not a clean forecast. Longer forward-vol points
+sit persistently above later short forward vols and forward realized SOFR
+volatility. A walk-forward ridge forecast converts the premium into a
+stylized carry screen with costs, lagged risk scaling, CPCV forecast validation,
+CPCV strategy checks, block-bootstrap paths, and block-permutation
+null tests.
 
-1. Bootstrap a quarterly SOFR discount and forward-rate curve.
-2. Convert quoted normal cap vols into Black-equivalent flat vols to replicate
-   the validation workbook.
-3. Strip caplet forward vols by repricing each cap and solving the marginal
-   caplet volatility.
-4. Convert stripped Black vols back into normal-vol units for time-series work.
-5. Test an expectations-hypothesis analog with HAC standard errors and
-   effective non-overlapping sample counts.
-6. Compare cap-implied forward vol against forward realized SOFR volatility and
-   policy-cycle regimes.
-7. Build a walk-forward realized-vol forecast from only lagged information.
-8. Trade a stylized forward-vol carry signal when implied volatility is rich or
-   cheap versus that forecast, with transaction costs and risk scaling.
-9. Stress the forecast with purged/embargoed blocked k-fold validation and the
-   strategy family with CPCV-style configurations, block bootstrap intervals,
-   block-permutation nulls, median cumulative path summaries, and parameter
-   sensitivity tables.
+## Core Contributions
 
-## Data
+1. **Caplet stripping engine:** bootstraps SOFR discount and forward-rate
+   curves, converts quoted normal caps to Black-equivalent flat vols,
+   reprices caplets, and solves residual marginal forward vols.
+2. **Independent validation:** reproduces a benchmark workbook on the
+   2025-06-30 validation date with explicit error tolerances.
+3. **Rates-vol premium evidence:** compares stripped forward vols with
+   future short forward vols and forward realized SOFR volatility.
+4. **Leakage-aware carry screen:** uses expanding-window forecasts,
+   transaction costs, risk targeting, and only information available at
+   the signal date.
+5. **Anti-overfit controls:** CPCV forecast validation, CPCV
+   strategy folds, feature ablations, interpolation robustness, block
+   bootstrap intervals, and block-permutation nulls.
+6. **Public-repo discipline:** raw workbooks and private tooling stay out
+   of Git; tables, figures, and paper artifacts are generated and hashed.
 
-Raw Excel workbooks are not tracked. Place these files in the repo root or
-`data/raw/` before running the notebook:
+## Paper in Brief
 
-- `project_cap_vol_ts.xlsx`
-- `cap_curves_2025-06-30.xlsx`
-- `ref_rates.xlsx`
+### Research Question
 
-The notebook reports only summary statistics, plots, and validation diagnostics.
-Optional public FRED series can be downloaded with:
+SOFR cap flat vols are bundled option-package quotes. The project asks:
 
-```bash
-python scripts/fetch_fred_series.py
+**Do stripped SOFR cap forward vols behave like unbiased expectations of
+future short-tenor volatility, or like compensated rates-volatility risk
+premia?**
+
+### Data
+
+Local inputs:
+
+- `project_cap_vol_ts.xlsx`: SOFR cap normal-vol and SOFR swap quote history.
+- `cap_curves_2025-06-30.xlsx`: benchmark curve-validation workbook.
+- `ref_rates.xlsx`: daily SOFR reference-rate history.
+
+These workbooks are intentionally ignored by Git. Place them in the repo
+root or `data/raw/` before running the full pipeline.
+
+### Main Objects
+
+A cap flat vol prices the bundled object:
+
+```text
+C(T, K, sigma_flat) = sum_i Z_i B(F_i, K, sigma_flat, t_i)
 ```
 
-Those files are written to `data/raw/fred/` and are not tracked.
+The stripped forward vol solves the marginal residual:
 
-## How to review
+```text
+C(T_i, K, sigma_flat_i) - previous caplets = Z_i B(F_i, K, sigma_fwd_i, t_i)
+```
 
-Start with the PDF paper for the claim hierarchy. Then open the notebook to see
-the executed calculations and figures. The reusable implementation is kept in
-`src/`, and the test suite provides quick checks that the public code still
-loads and preserves key numerical behavior.
+The empirical premium is:
+
+```text
+VTP(t, tau) = forward_vol(t, tau) - forward_vol(t + tau - 0.5, 0.5)
+```
+
+The carry screen sells forward vol when implied vol is rich versus a
+walk-forward forecast of future realized SOFR volatility and buys it when
+it is cheap.
+
+## Repository Structure
+
+```text
+.
+├── README.md
+├── run_all.py
+├── pyproject.toml
+├── src/
+│   ├── curve.py
+│   ├── data.py
+│   ├── inference.py
+│   ├── pricing.py
+│   ├── strategy.py
+│   ├── validation.py
+│   ├── plotting.py
+│   ├── artifacts.py
+│   └── sofr_forward_vol.py
+├── scripts/
+│   ├── 01_build_curves.py
+│   ├── 02_analysis_tables.py
+│   ├── 03_generate_figures.py
+│   ├── 04_compile_paper_inputs.py
+│   ├── 05_tex_integrity_check.py
+│   └── 06_final_artifact_check.py
+├── notebooks/
+├── tables/
+├── figures/
+├── paper/
+├── tests/
+└── docs/
+```
+
+## Reproduce the Results
+
+### 1. Create an environment
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+```
+
+### 2. Run the full pipeline
+
+```bash
+python run_all.py --mode full
+```
+
+Pipeline steps:
+
+| Step | Script | Purpose |
+|---|---|---|
+| 1 | `scripts/01_build_curves.py` | Write processed forward-vol panels and validation curves. |
+| 2 | `scripts/02_analysis_tables.py` | Regenerate CSV and LaTeX table provenance. |
+| 3 | `scripts/03_generate_figures.py` | Regenerate README PNGs and paper PDF figures. |
+| 4 | `scripts/04_compile_paper_inputs.py` | Regenerate paper source from scripted diagnostics. |
+| 5 | `scripts/05_tex_integrity_check.py` | Check labels, refs, generated inputs, and figure usage. |
+| 6 | `scripts/06_final_artifact_check.py` | Run public hygiene checks and write artifact hashes. |
+
+### 3. Build the paper
+
+```bash
+cd paper
+lualatex SOFR_Cap_Forward_Volatility.tex
+```
+
+### 4. Validate artifacts
+
+```bash
+python scripts/05_tex_integrity_check.py
+python scripts/06_final_artifact_check.py
+pytest -q
+```
+
+## Methods Glossary
+
+- **SOFR cap:** interest-rate option package that pays when SOFR exceeds a strike.
+- **Caplet:** one optionlet inside the cap package.
+- **Flat vol:** single volatility quoted for the whole cap package.
+- **Forward vol:** marginal volatility assigned to a future caplet after earlier
+  caplets have been priced.
+- **Normal vol:** Bachelier-style volatility in rate units.
+- **Black vol:** lognormal caplet volatility used for the stripping bridge.
+- **HAC/Newey-West:** standard errors robust to serial correlation from overlapping horizons.
+- **CPCV:** combinatorial purged cross-validation over time blocks; all forecast and strategy validation in the paper uses purged/embargoed CPCV folds.
+- **Block bootstrap:** resampling contiguous P&L blocks to preserve local dependence.
+
+## Recruiter and Trader Notes
+
+This repo demonstrates:
+
+- fixed-income derivatives curve construction;
+- caplet pricing and implied-vol inversion;
+- leakage-aware financial ML validation;
+- rates-volatility risk-premium measurement;
+- cost-aware strategy research without overclaiming live tradability;
+- public research hygiene with generated provenance and artifact checks.
+
+## Disclaimer
+
+This repository is an academic research project. It is not investment
+advice, a production trading system, or a recommendation to trade SOFR
+options.
